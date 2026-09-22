@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "sample-prox1-e13-5-e14-5",
+  "createdAt": "2026-09-22T00:00:00.000Z",
+  "document": {
+    "doi": "10.1038/s41586-020-2998-x",
+    "url": "https://www.nature.com/articles/s41586-020-2998-x",
+    "title": "Lymphoangiocrine signals promote cardiac growth and repair"
+  },
+  "selector": {
+    "type": "TextQuoteSelector",
+    "exact": "To conditionally delete Prox1 from LECs, we crossed Cad5(PAC)-CreERT2 mice with Prox1 floxed mice and injected pregnant females with tamoxifen at E13.5 and E14.5.",
+    "prefix": "",
+    "suffix": ""
+  },
+  "translation": "为了有条件地从淋巴内皮细胞（LEC）中删除 Prox1，我们将 Cad5(PAC)-CreERT2 小鼠与 Prox1 条件性敲除小鼠杂交，并在妊娠第 13.5 天（E13.5）和第 14.5 天（E14.5）给怀孕雌鼠注射他莫昔芬（TAM）。",
+  "comment": "示例：验证网页原文锚点是否能定位回本地 PDF。",
+  "color": "#d26854"
+}

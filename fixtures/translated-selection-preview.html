@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="citation_doi" content="10.1038/example" />
+    <title>Translate Bridge for Zotero 中文反查回归</title>
+    <link rel="stylesheet" href="../packages/browser-extension/content.css" />
+    <style>
+      body {
+        max-width: 760px;
+        margin: 80px;
+        color: #1d1d1f;
+        font:
+          20px/1.75 Georgia,
+          serif;
+      }
+    </style>
+    <script>
+      window.chrome = {
+        storage: {
+          local: {
+            get: async (defaults) => defaults,
+            set: async () => undefined,
+          },
+        },
+        runtime: {
+          sendMessage: async () => ({ ok: true }),
+          onMessage: { addListener: () => undefined },
+        },
+      };
+    </script>
+  </head>
+  <body>
+    <h1>Selection mapping regression</h1>
+    <p id="article-paragraph">
+      Pathological cardiac hypertrophy is a major risk factor for multiple
+      cardiovascular diseases. Although several therapeutic strategies can
+      improve cardiac dysfunction, mortality remains high and new targets are
+      urgently needed. We therefore investigated whether lymphangiogenesis can
+      protect the heart during pressure overload.
+    </p>
+    <script src="../packages/browser-extension/content.js"></script>
+    <script>
+      const translated =
+        "病理性心肌肥大是多种心血管疾病的主要危险因素。尽管多种治疗策略可以改善心功能障碍，死亡率仍然很高，因此迫切需要新的治疗靶点。我们因此研究了淋巴管生成能否在压力超负荷期间保护心脏。";
+      const paragraph = document.getElementById("article-paragraph");
+      paragraph.textContent = translated;
+      const range = document.createRange();
+      range.selectNodeContents(paragraph);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      setTimeout(() => {
+        document.querySelector(".pb-selection-button")?.click();
+      }, 30);
+    </script>
+  </body>
+</html>

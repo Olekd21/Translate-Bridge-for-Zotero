@@ -1,0 +1,16 @@
+node_modules/
+.cache/
+dist/
+*.xpi
+packages/zotero-addon/.scaffold/
+packages/zotero-addon/build/
+packages/zotero-addon/.env
+*.pem
+*.key
+*.crx
+.env
+.env.*
+!.env.example
+.vscode/
+/progress.md
+/task_plan.md

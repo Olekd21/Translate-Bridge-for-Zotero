@@ -1,0 +1,64 @@
+{
+  "name": "paper-bridge-zotero",
+  "type": "module",
+  "version": "0.5.0",
+  "description": "Connect Chrome Google Translate reading with local Zotero PDF highlights, translations and notes.",
+  "config": {
+    "addonName": "Translate Bridge for Zotero",
+    "addonID": "paperbridge@local.research",
+    "addonRef": "paperbridge",
+    "addonInstance": "PaperBridge",
+    "prefsPrefix": "extensions.zotero.paperbridge"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jinwenpang0523-alt/Translate-Bridge-for-Zotero.git"
+  },
+  "author": "Translate Bridge for Zotero contributors",
+  "bugs": {
+    "url": "https://github.com/jinwenpang0523-alt/Translate-Bridge-for-Zotero/issues"
+  },
+  "homepage": "https://github.com/jinwenpang0523-alt/Translate-Bridge-for-Zotero#readme",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "prebuild": "node ../../scripts/prepare-addon-guide.mjs",
+    "start": "zotero-plugin serve",
+    "build": "zotero-plugin build && tsc --noEmit",
+    "lint:check": "prettier --check . && eslint .",
+    "lint:fix": "prettier --write . && eslint . --fix",
+    "release": "zotero-plugin release",
+    "test": "zotero-plugin test",
+    "update-deps": "npm update --save"
+  },
+  "dependencies": {
+    "zotero-plugin-toolkit": "^5.1.0-beta.13"
+  },
+  "devDependencies": {
+    "@types/chai": "^5.2.3",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^24.10.0",
+    "@zotero-plugin/eslint-config": "^0.6.7",
+    "chai": "^6.2.1",
+    "eslint": "^9.39.2",
+    "mocha": "^11.7.5",
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3",
+    "zotero-plugin-scaffold": "^0.8.2",
+    "zotero-types": "^4.1.0-beta.4"
+  },
+  "prettier": {
+    "printWidth": 80,
+    "tabWidth": 2,
+    "endOfLine": "lf",
+    "overrides": [
+      {
+        "files": [
+          "*.xhtml"
+        ],
+        "options": {
+          "htmlWhitespaceSensitivity": "css"
+        }
+      }
+    ]
+  }
+}

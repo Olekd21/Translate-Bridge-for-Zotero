@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Translate Bridge for Zotero 用户手册</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #1d1d1f;
+        --muted: #6e6e73;
+        --line: #e5e5e7;
+        --blue: #0071e3;
+        --soft: #f5f5f7;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        color: var(--ink);
+        background: #fff;
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+          sans-serif;
+        line-height: 1.65;
+      }
+      main {
+        width: min(760px, calc(100% - 40px));
+        margin: 56px auto 80px;
+      }
+      header {
+        padding-bottom: 28px;
+        border-bottom: 1px solid var(--line);
+      }
+      .eyebrow {
+        color: var(--blue);
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+      h1 {
+        margin: 8px 0 10px;
+        font-size: clamp(34px, 7vw, 54px);
+        line-height: 1.08;
+        letter-spacing: -0.035em;
+      }
+      .lead {
+        margin: 0;
+        color: var(--muted);
+        font-size: 18px;
+      }
+      section {
+        padding: 28px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      h2 {
+        margin: 0 0 14px;
+        font-size: 22px;
+        letter-spacing: -0.015em;
+      }
+      ol,
+      ul {
+        margin: 0;
+        padding-left: 1.4em;
+      }
+      li + li {
+        margin-top: 8px;
+      }
+      code {
+        padding: 2px 6px;
+        border-radius: 6px;
+        background: var(--soft);
+        font-family: Consolas, monospace;
+        font-size: 0.92em;
+      }
+      .tip {
+        margin-top: 16px;
+        padding: 14px 16px;
+        border-radius: 12px;
+        background: var(--soft);
+        color: #424245;
+      }
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+        margin: 16px 0 18px;
+      }
+      .flow span {
+        padding: 12px 10px;
+        border-radius: 12px;
+        background: #f0f6ff;
+        color: #064f9e;
+        text-align: center;
+        font-size: 14px;
+        font-weight: 650;
+      }
+      .faq strong {
+        color: var(--ink);
+      }
+      footer {
+        padding-top: 22px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      @media (max-width: 560px) {
+        main {
+          margin-top: 32px;
+        }
+        .flow {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="eyebrow">TRANSLATE BRIDGE FOR ZOTERO · 0.7.0</div>
+        <h1>三步开始使用</h1>
+        <p class="lead">
+          在论文网页中阅读和做笔记，并把高亮、中文翻译与个人笔记同步到 Zotero
+          PDF 的对应原文位置。
+        </p>
+      </header>
+      <section>
+        <h2>先确认：只需安装 Translate Bridge for Zotero 两端</h2>
+        <ul>
+          <li>
+            <strong>必需：</strong>Zotero 桌面版 + 本包 Zotero 插件；桌面 Chrome
+            138+ + 本包 Chrome 扩展，两端运行在同一电脑。
+          </li>
+          <li>
+            <strong>同步高亮必需：</strong>Zotero 中已有对应论文和带文字层的
+            PDF；纯扫描图片不能直接定位。
+          </li>
+          <li>
+            <strong>翻译条件：</strong>整页中文使用 Chrome
+            自带翻译；扩展内英译中及部分反查使用 Chrome 本地 Translator
+            与英中语言包，首次可能下载，实际可用性取决于设备和网页。<a
+              href="https://developer.chrome.com/docs/ai/translator-api"
+              >Chrome 官方说明</a
+            >
+          </li>
+          <li>
+            <strong>可选：</strong>Zotero Connector
+            方便收录论文，不是同步的必需组件。
+          </li>
+          <li>
+            <strong>无需安装：</strong>LLM-for-Zotero、PDF
+            Translate、Style、Better BibTeX、OCR 插件；无需 AI API key、Node.js
+            或 Python。
+          </li>
+        </ul>
+        <div class="tip">
+          已验证：Windows + Zotero 9.0.6。插件声明支持 Zotero 7–10，其他版本和
+          macOS/Linux 尚未完成同等实机验证，建议先测试一篇论文。
+        </div>
+      </section>
+      <section>
+        <h2>1. 安装 Zotero 插件</h2>
+        <ol>
+          <li>打开 Zotero，点击“工具 → 插件”。</li>
+          <li>点击右上角齿轮，选择“从文件安装插件”。</li>
+          <li>选择 <code>Translate-Bridge-Zotero-0.5.0.xpi</code>。</li>
+          <li>完全退出 Zotero，再重新打开。</li>
+          <li>点击“工具 → Translate Bridge for Zotero → 复制配对码”。</li>
+        </ol>
+      </section>
+      <section>
+        <h2>2. 安装 Chrome 扩展</h2>
+        <ol>
+          <li>在 Chrome 地址栏打开 <code>chrome://extensions/</code>。</li>
+          <li>开启右上角“开发者模式”，点击“加载已解压的扩展程序”。</li>
+          <li>选择整个 <code>Translate-Bridge-Chrome-0.7.0</code> 文件夹。</li>
+          <li>进入 Translate Bridge for Zotero 的“详情 → 扩展程序选项”。</li>
+          <li>粘贴配对码，点击“保存并测试”。</li>
+        </ol>
+        <div class="tip">
+          建议点击 Chrome 工具栏的拼图图标，把 Translate Bridge for Zotero 固定在工具栏。
+        </div>
+      </section>
+      <section>
+        <h2>3. 阅读、做笔记并同步</h2>
+        <div class="flow">
+          <span>选择完整句子</span><span>翻译并做笔记</span
+          ><span>同步到 Zotero</span>
+        </div>
+        <ol>
+          <li>
+            在 Zotero
+            选中论文，点列表顶部带蓝色桥形图标的“网页阅读”；也可右键选“Paper
+            Bridge · 在浏览器中阅读”。
+          </li>
+          <li>
+            网址由系统默认浏览器打开；如果不是 Chrome，请复制到
+            Chrome。首次翻译前先让英文正文完整加载。
+          </li>
+          <li>可以直接选择英文，也可以用 Chrome 整页翻译后选择中文。</li>
+          <li>选择一个完整句子或连续段落，点击“翻译并做笔记”。</li>
+          <li>选择高亮颜色，可填写个人笔记，然后点击“同步到 Zotero”。</li>
+          <li>
+            点击“打开选中段落”可定位当前段落；同步成功后会直接定位到该高亮。
+          </li>
+        </ol>
+        <div class="tip">
+          批注中“我的笔记”排在最上方，中文翻译在下方。<code>Ctrl + Enter</code>
+          可同步，<code>Esc</code> 可关闭侧栏。
+        </div>
+        <div class="tip">
+          “打开这篇文章”始终可用；“打开选中段落”在未选择文字时为灰色，选中并恢复出英文锚点后会变亮。
+        </div>
+      </section>
+      <section class="faq">
+        <h2>引导、更新与使用范围</h2>
+        <ul>
+          <li>
+            顶部“?”或“工具 → Translate Bridge for Zotero →
+            开始使用与配对…”可查看引导；“用户手册与依赖说明…”可离线打开本手册。
+          </li>
+          <li>
+            当前定位范围：PDF 前 5
+            页；支持两侧都有足够文字的相邻两页跨页高亮。扫描
+            PDF、三页以上选区及网页/PDF 版本差异可能导致定位失败。
+          </li>
+          <li>
+            批注保存为 Zotero 原生高亮，不会覆盖原 PDF；分享带批注 PDF 请使用
+            Zotero 导出功能。
+          </li>
+          <li>
+            更新 Zotero 端：安装新版 XPI 并重启。更新 Chrome
+            端：用新版文件覆盖原加载文件夹，在扩展管理页点“重新加载”，再刷新论文页；换文件夹加载时需要重新配对。
+          </li>
+        </ul>
+      </section>
+      <section class="faq">
+        <h2>首次验收</h2>
+        <ol>
+          <li>点击 Chrome 扩展设置中的“保存并测试”，确认连接成功。</li>
+          <li>
+            选择 PDF 前 5 页的一句正文，写一条测试笔记并同步；核对 PDF
+            高亮位置、译文、笔记和颜色。
+          </li>
+          <li>点“打开选中段落”，确认定位正确，再开始正式使用。</li>
+        </ol>
+        <div class="tip">
+          把整个 ZIP
+          发给同事即可。每位同事在自己电脑生成配对码，不要分享个人配对码、浏览器配置或文库。
+        </div>
+      </section>
+      <section class="faq">
+        <h2>遇到问题</h2>
+        <ul>
+          <li>
+            <strong>Zotero 暂不可用：</strong>确认 Zotero
+            已打开；重新复制配对码并保存测试。
+          </li>
+          <li>
+            <strong>未找到文献：</strong>确认 Zotero 中已有该论文，DOI
+            或标题正确，并附有 PDF。
+          </li>
+          <li>
+            <strong>中文无法定位：</strong
+            >先刷新英文原始页面，再开启整页翻译，并选择完整句子。
+          </li>
+          <li>
+            <strong>Extension context invalidated：</strong>刷新当前论文网页。
+          </li>
+          <li>
+            <strong>“打开选中段落”是灰色：</strong
+            >尚未选择文字，或扩展仍在恢复对应英文原文。
+          </li>
+        </ul>
+      </section>
+      <footer>
+        优先环境：Windows、Zotero 9.0.6、桌面 Chrome 138+。Translate Bridge for Zotero
+        只把批注发送到本机 Zotero；Chrome/Google 翻译的数据处理遵循其服务规则。
+      </footer>
+    </main>
+  </body>
+</html>

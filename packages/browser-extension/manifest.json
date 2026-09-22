@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "Translate Bridge for Zotero",
+  "version": "0.7.0",
+  "minimum_chrome_version": "138",
+  "description": "Connect Chrome Google Translate reading with Zotero PDF highlights, translations and notes.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:23119/*",
+    "http://localhost:23119/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "打开 Translate Bridge for Zotero",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "content.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "homepage_url": "https://github.com/jinwenpang0523-alt/Translate-Bridge-for-Zotero"
+}

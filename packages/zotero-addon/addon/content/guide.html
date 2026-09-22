@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Translate Bridge for Zotero · 开始使用</title>
+    <link rel="stylesheet" href="guide.css" />
+    <script src="guide.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img
+          src="icons/favicon.png"
+          width="44"
+          height="44"
+          alt="Translate Bridge for Zotero 桥形图标"
+        />
+        <div>
+          <p class="brand">Translate Bridge for Zotero</p>
+          <h1>网页阅读，批注回到 PDF</h1>
+        </div>
+      </header>
+      <p class="intro">
+        先安装两端，再配对一次。日常选中论文，点顶部的“网页阅读”就能开始。
+      </p>
+      <ol class="steps">
+        <li>
+          <h2>在 Chrome 安装配套扩展</h2>
+          <p>
+            解压安装包，按用户手册加载 Translate Bridge for Zotero Chrome
+            文件夹，并将扩展固定到工具栏。
+          </p>
+          <p class="detail">
+            只需 Translate Bridge for Zotero 两端，不需要额外安装 Zotero 翻译或 AI 插件。
+          </p>
+        </li>
+        <li>
+          <h2>把 Zotero 与 Chrome 配对</h2>
+          <p>
+            复制配对码 → Chrome 的 Translate Bridge for Zotero 设置 → 粘贴 →
+            “保存并测试”。每位同事使用自己电脑生成的配对码。
+          </p>
+          <button type="button" id="copy-code">复制配对码</button>
+        </li>
+        <li>
+          <h2>选论文，开始阅读</h2>
+          <p>
+            在 Zotero 选中一篇已有 PDF 的论文。打开网页后，用 Chrome
+            整页翻译，选择句子、写笔记，再点“同步到 Zotero”。
+          </p>
+          <button type="button" id="open-article" class="primary">
+            在浏览器中阅读所选论文
+          </button>
+          <p class="detail">
+            链接由系统默认浏览器打开；若不是 Chrome，请把网址复制到 Chrome。
+          </p>
+        </li>
+      </ol>
+      <p id="guide-status" role="status" aria-live="polite">
+        Zotero 保持运行，批注通过本机连接同步。
+      </p>
+      <footer>
+        <button type="button" id="open-manual" class="link">
+          查看完整手册与依赖说明
+        </button>
+        <span>支持范围与常见问题都在手册中。</span>
+      </footer>
+    </main>
+  </body>
+</html>

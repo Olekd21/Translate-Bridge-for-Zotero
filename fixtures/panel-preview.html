@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Translate Bridge for Zotero panel preview</title>
+    <link rel="stylesheet" href="../packages/browser-extension/content.css" />
+    <style>
+      body {
+        background: #fff;
+        color: #222;
+        font:
+          18px/1.75 Georgia,
+          serif;
+        margin: 0 auto;
+        max-width: 980px;
+        padding: 70px 480px 100px 70px;
+      }
+
+      h1 {
+        font-size: 42px;
+        line-height: 1.1;
+      }
+
+      mark {
+        background: #cfe5ff;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Cardiac lymphatic growth and repair</h1>
+    <p>
+      Recent studies have suggested that lymphatics help to restore heart
+      function after cardiac injury.
+      <mark
+        >Lymphatic endothelial cells control cardiomyocyte proliferation and
+        survival during development.</mark
+      >
+    </p>
+    <div id="paper-bridge-root" class="notranslate" translate="no">
+      <aside
+        class="pb-panel"
+        aria-label="Translate Bridge for Zotero 批注侧栏"
+        data-open="true"
+      >
+        <header class="pb-header">
+          <div class="pb-rail" aria-hidden="true"></div>
+          <div class="pb-title-wrap">
+            <span class="pb-brandmark" aria-hidden="true">
+              <svg viewBox="0 0 36 36">
+                <rect x="1" y="1" width="34" height="34" rx="10" />
+                <path
+                  d="M8.5 23.5c2.6-7.2 7.2-10.8 9.5-10.8s6.9 3.6 9.5 10.8M9 20.8v5.1M27 20.8v5.1"
+                />
+              </svg>
+            </span>
+            <span
+              ><span class="pb-kicker">Source ↔ Zotero</span
+              ><span class="pb-title">Translate Bridge for Zotero</span></span
+            >
+          </div>
+          <button class="pb-close" type="button" aria-label="关闭">×</button>
+        </header>
+        <div class="pb-body">
+          <div class="pb-reading-scroll">
+            <div class="pb-document">
+              Lymphangiocrine signals · 10.1038/s41586-020-2998-x
+            </div>
+            <section
+              class="pb-card pb-source-card"
+              data-expanded="false"
+              data-collapsible="true"
+            >
+              <div class="pb-card-head">
+                <span class="pb-label">PDF 定位原文</span>
+                <span class="pb-card-state">英文锚点</span>
+              </div>
+              <p class="pb-source">
+                Recent studies have suggested that lymphatics help to restore
+                heart function after cardiac injury. Here we report that
+                lymphatics promote cardiac growth, repair and cardioprotection
+                in mice. We show that a lymphangiocrine signal produced by
+                lymphatic endothelial cells controls the proliferation and
+                survival of cardiomyocytes during heart development and improves
+                neonatal cardiac regeneration.
+              </p>
+              <button class="pb-expand pb-source-expand" type="button">
+                展开原文
+              </button>
+            </section>
+            <section
+              class="pb-card pb-translation-card"
+              data-expanded="false"
+              data-collapsible="true"
+            >
+              <div class="pb-card-head">
+                <span class="pb-label">中文阅读层</span>
+                <span class="pb-card-state">阅读译文</span>
+              </div>
+              <p class="pb-translation">
+                近期研究表明，淋巴系统有助于心脏损伤后的功能恢复。这里展示的是更长的译文预览：长内容默认折叠，只保留足够阅读和确认定位的部分。同步按钮与笔记始终固定在底部，不需要再滑到整段文字末尾。
+              </p>
+              <button class="pb-expand pb-translation-expand" type="button">
+                展开译文
+              </button>
+            </section>
+          </div>
+          <div class="pb-dock">
+            <label class="pb-note-wrap">
+              <span class="pb-note-head"
+                ><span class="pb-label">我的笔记</span
+                ><span class="pb-shortcut">Ctrl + Enter 同步</span></span
+              >
+              <textarea
+                class="pb-note"
+                placeholder="记录判断、疑问或与课题的联系……"
+              ></textarea>
+            </label>
+            <div class="pb-color-wrap">
+              <div class="pb-color-head">
+                <span class="pb-label">高亮颜色</span
+                ><span class="pb-color-name">蓝色</span>
+              </div>
+              <div
+                class="pb-color-options"
+                role="radiogroup"
+                aria-label="选择 Zotero 高亮颜色"
+              >
+                <button
+                  class="pb-color"
+                  type="button"
+                  role="radio"
+                  aria-label="黄色"
+                  aria-checked="false"
+                  style="--pb-swatch: #ffd400"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="pb-color"
+                  type="button"
+                  role="radio"
+                  aria-label="红色"
+                  aria-checked="false"
+                  style="--pb-swatch: #ff6666"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="pb-color"
+                  type="button"
+                  role="radio"
+                  aria-label="绿色"
+                  aria-checked="false"
+                  style="--pb-swatch: #5fb236"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="pb-color"
+                  type="button"
+                  role="radio"
+                  aria-label="蓝色"
+                  aria-checked="true"
+                  style="--pb-swatch: #2ea8e5"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="pb-color"
+                  type="button"
+                  role="radio"
+                  aria-label="紫色"
+                  aria-checked="false"
+                  style="--pb-swatch: #a28ae5"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="pb-color"
+                  type="button"
+                  role="radio"
+                  aria-label="品红"
+                  aria-checked="false"
+                  style="--pb-swatch: #e56eee"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="pb-color"
+                  type="button"
+                  role="radio"
+                  aria-label="橙色"
+                  aria-checked="false"
+                  style="--pb-swatch: #f19837"
+                >
+                  <span></span>
+                </button>
+                <button
+                  class="pb-color"
+                  type="button"
+                  role="radio"
+                  aria-label="灰色"
+                  aria-checked="false"
+                  style="--pb-swatch: #aaaaaa"
+                >
+                  <span></span>
+                </button>
+              </div>
+            </div>
+            <div class="pb-open-actions" aria-label="在 Zotero 中打开">
+              <button class="pb-action pb-action-document" type="button">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path
+                    d="M4.5 3.8h7l4 4v8.4H4.5zM11.5 3.8v4h4M7 11h6M7 13.8h4"
+                  />
+                </svg>
+                <span>打开这篇文章</span>
+              </button>
+              <button class="pb-action pb-action-open" type="button">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path
+                    d="M7.5 4.2H4.8c-.5 0-.8.4-.8.8v10.2c0 .5.3.8.8.8H15c.4 0 .8-.3.8-.8v-2.7M10 10l6-6m0 0h-4m4 0v4"
+                  />
+                </svg>
+                <span>打开选中段落</span>
+              </button>
+            </div>
+            <div class="pb-actions">
+              <button class="pb-action pb-action-secondary" type="button">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path
+                    d="M15.4 6.4A6.4 6.4 0 1 0 16 13M15.4 6.4V2.8m0 3.6h-3.6"
+                  /></svg
+                ><span>重新匹配原文</span>
+              </button>
+              <button class="pb-action pb-action-primary" type="button">
+                <svg viewBox="0 0 20 20" aria-hidden="true">
+                  <path
+                    d="M10 14.8V3.5m0 0L6.5 7M10 3.5 13.5 7M4 11.5v4.2c0 .5.4.8.8.8h10.4c.4 0 .8-.3.8-.8v-4.2"
+                  /></svg
+                ><span>同步到 Zotero</span>
+              </button>
+            </div>
+            <div class="pb-status" data-tone="good">
+              已对上英文原文，可同步为 Zotero PDF 高亮
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </body>
+</html>

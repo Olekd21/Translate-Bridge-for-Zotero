@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Translate Bridge for Zotero 设置</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="rail" aria-hidden="true"></div>
+        <div class="header-content">
+          <img src="icons/icon-48.png" width="48" height="48" alt="" />
+          <div>
+            <p class="kicker">Source ↔ Zotero</p>
+            <h1>Translate Bridge for Zotero 设置</h1>
+            <p class="version" id="version"></p>
+          </div>
+        </div>
+      </header>
+
+      <section>
+        <h2>连接本地 Zotero</h2>
+        <p>
+          在 Zotero 的“工具 → Translate Bridge for Zotero →
+          复制配对码”中获取配对码，然后粘贴到这里。配对码只保存在当前 Chrome
+          配置中。
+        </p>
+        <label>
+          配对码
+          <input
+            id="pairing-token"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+        <p class="field-help">
+          配对码只保存在这台电脑的 Chrome 中，不会上传到云端。
+        </p>
+        <div class="actions">
+          <button id="save" class="primary" type="button">保存并测试</button>
+          <button id="retry" type="button">重试待同步笔记</button>
+        </div>
+        <p id="status" role="status" data-tone="neutral">尚未测试连接</p>
+      </section>
+
+      <section class="note">
+        <h2>PDF 原文同步</h2>
+        <p>
+          可选择英文原文，也可先刷新英文页面、再开启整页翻译并选择中文句子。同步成功后，Zotero
+          会在 PDF
+          对应英文上创建原生高亮；中文译文和你的笔记会写入该高亮的批注。当前坐标定位先支持
+          PDF 前 5 页。
+        </p>
+      </section>
+
+      <section>
+        <h2>首次使用</h2>
+        <ol class="steps">
+          <li>
+            <span>1</span>
+            <p>先在 Zotero 9 安装 Translate Bridge for Zotero 插件并重启 Zotero。</p>
+          </li>
+          <li>
+            <span>2</span>
+            <p>
+              从 Zotero“工具 → Translate Bridge for Zotero →
+              复制配对码”获取配对码，在本页保存并测试。
+            </p>
+          </li>
+          <li>
+            <span>3</span>
+            <p>打开论文网页，刷新一次后再使用浏览器整页翻译并选择中文。</p>
+          </li>
+        </ol>
+      </section>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>
