@@ -20,13 +20,13 @@
 
 ## 安装
 
-在 Releases 下载 `translate-bridge-for-zotero-0.7.0.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
+在 Releases 下载 `translate-bridge-for-zotero-0.8.0.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
 
 需要同一电脑上的 Zotero 桌面版、Chrome 138+ 以及带文字层的论文 PDF。Zotero Connector 可选；不依赖 LLM-for-Zotero、Zotero PDF Translate、Style 或 Better BibTeX。详细步骤见 [用户手册](docs/用户手册.md)。分发产物位于 `dist/`：
 
-- `translate-bridge-chrome-0.7.0.zip`
-- `translate-bridge-zotero-0.5.0.xpi`
-- `translate-bridge-for-zotero-0.7.0.zip`（完整安装包）
+- `translate-bridge-chrome-0.8.0.zip`
+- `translate-bridge-zotero-0.6.0.xpi`
+- `translate-bridge-for-zotero-0.8.0.zip`（完整安装包）
 
 ## 从源码构建与验证
 
@@ -46,6 +46,6 @@ Zotero 端基于 [Zotero Plugin Template](https://github.com/windingwind/zotero-
 ## 已知限制
 
 - Chrome 需要 138 或更高版本。
-- 当前 PDF 坐标识别先覆盖 PDF 前 5 页。
+- PDF 定位覆盖整篇文档；首次同步需读取全文，之后复用本机会话缓存。PDF 更新后自动重新读取。
 - 中文反查以完整句子或连续段落最可靠；不可靠时会拒绝写入，避免错误高亮。
 - Chrome 扩展尚未上架 Chrome Web Store，需以“加载已解压的扩展程序”方式安装。

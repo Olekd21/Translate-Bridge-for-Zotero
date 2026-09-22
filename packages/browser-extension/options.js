@@ -36,11 +36,14 @@ saveButton.addEventListener("click", async () => {
     const response = await chrome.runtime.sendMessage({
       type: "paperbridge:ping",
     });
+    const needsUpdate = response?.ok && !response.capabilities?.fullDocumentGeometry;
     setStatus(
       response?.ok
-        ? `连接成功：${response.name} ${response.version}`
+        ? (needsUpdate
+          ? `连接成功，但 Zotero 端仍为 ${response.version}，仅支持前 5 页。请安装 0.6.0 或更高版本 XPI 并重启 Zotero。`
+          : `连接成功：${response.name} ${response.version} · 已支持 PDF 全文定位`)
         : `连接失败：${response?.error || "未知错误"}`,
-      response?.ok ? "good" : "warn",
+      response?.ok && !needsUpdate ? "good" : "warn",
     );
   } catch (error) {
     setStatus(

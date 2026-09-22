@@ -1,10 +1,7 @@
 import pkg from "../../package.json";
 import { type TextQuoteSelector } from "./textMatcher";
-import {
-  locateQuoteGeometry,
-  type GeometryMatch,
-  type RecognizerData,
-} from "./pdfGeometry";
+import { locateQuoteGeometry, type GeometryMatch } from "./pdfGeometry";
+import { readFullPdfGeometry, clearPdfCache } from "./fullPdf";
 
 const { config } = pkg;
 const PING_PATH = "/paperbridge/ping";
@@ -200,7 +197,7 @@ function firstPdfAttachment(parent: any) {
 async function findPDFMatch(
   parent: any,
   selector: TextQuoteSelector,
-): Promise<{ attachment?: any; match: GeometryMatch }> {
+): Promise<{ attachment?: any; match: GeometryMatch; error?: string }> {
   const attachment = firstPdfAttachment(parent);
 
   if (!attachment) {
@@ -208,19 +205,20 @@ async function findPDFMatch(
   }
 
   try {
-    const result = (await (Zotero.PDFWorker as any).getRecognizerData(
-      attachment.id,
-      true,
-    )) as RecognizerData;
+    const result = await readFullPdfGeometry(attachment);
     return {
       attachment,
       match: locateQuoteGeometry(result, selector),
     };
   } catch (error) {
-    ztoolkit.log("Translate Bridge for Zotero PDF geometry extraction failed", error);
+    ztoolkit.log(
+      "Translate Bridge for Zotero PDF geometry extraction failed",
+      error,
+    );
     return {
       attachment,
       match: { status: "not-found", occurrences: 0 },
+      error: `PDF 全文读取失败，未创建批注：${error instanceof Error ? error.message : String(error)}`,
     };
   }
 }
@@ -312,6 +310,7 @@ class PingEndpoint {
       name: config.addonName,
       version: pkg.version,
       paired: true,
+      capabilities: { fullDocumentGeometry: true },
     });
   }
 }
@@ -378,7 +377,10 @@ class AnnotationEndpoint {
           match: located.match,
           nativePdfHighlightCreated: false,
           error:
-            "已取得英文原文，但未在当前 PDF 已读取的页面中找到唯一对应位置；可能存在版本、排版或读取页数限制，请尝试缩短选区。",
+            located.error ||
+            (located.match.status === "ambiguous"
+              ? "PDF 全文中存在多处相似原文，未创建批注；请选择带有更多上下文的完整句子。"
+              : "已检索 PDF 全文，未找到对应文字；请确认网页与 PDF 是同一版本，且 PDF 文字可以选择。"),
         });
       }
       const nativeAnnotation = await saveNativeHighlight(
@@ -513,7 +515,10 @@ class OpenDocumentEndpoint {
         itemKey: parentSelection.item.key,
       });
     } catch (error) {
-      ztoolkit.log("Translate Bridge for Zotero open document request failed", error);
+      ztoolkit.log(
+        "Translate Bridge for Zotero open document request failed",
+        error,
+      );
       return jsonResponse(500, {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
@@ -561,7 +566,11 @@ class OpenSelectionEndpoint {
       if (located.match.pageIndex === undefined) {
         return jsonResponse(404, {
           ok: false,
-          error: "未在 PDF 中定位到当前选中段落",
+          error:
+            located.error ||
+            (located.match.status === "ambiguous"
+              ? "PDF 全文中存在多处相似原文，无法唯一定位；请选择带有更多上下文的完整句子。"
+              : "已检索 PDF 全文，未找到对应文字；请确认网页与 PDF 版本一致，且 PDF 文字可以选择。"),
         });
       }
       await (Zotero.Reader as any).open(
@@ -576,7 +585,10 @@ class OpenSelectionEndpoint {
         match: located.match,
       });
     } catch (error) {
-      ztoolkit.log("Translate Bridge for Zotero open selection request failed", error);
+      ztoolkit.log(
+        "Translate Bridge for Zotero open selection request failed",
+        error,
+      );
       return jsonResponse(500, {
         ok: false,
         error: error instanceof Error ? error.message : String(error),
@@ -595,6 +607,7 @@ export function registerBridgeServer() {
 }
 
 export function unregisterBridgeServer() {
+  clearPdfCache();
   const endpoints = (Zotero.Server as any).Endpoints;
   delete endpoints[PING_PATH];
   delete endpoints[ANNOTATION_PATH];

@@ -28,7 +28,7 @@ with ZipFile(bundle) as z:
     assert guide == (root / "docs/开始使用.html").read_bytes()
     assert read("USER-MANUAL.md") == (root / "docs/用户手册.md").read_bytes()
     assert xpi_name.encode() in guide and folder[:-1].encode() in guide
-    for term in ["Translator", "Connector", "LLM-for-Zotero", "前 5 页", "复制配对码"]:
+    for term in ["Translator", "Connector", "LLM-for-Zotero", "PDF 全文", "复制配对码"]:
         assert term in guide.decode("utf-8"), term
     with ZipFile(io.BytesIO(read(xpi_name))) as xpi:
         assert xpi.testzip() is None
@@ -38,9 +38,11 @@ with ZipFile(bundle) as z:
         assert xpi.read("content/user-guide.html") == guide
         for f in ["guide.html", "guide.js", "guide.css", "icons/favicon.png", "icons/favicon@0.5x.png"]:
             assert xpi.read("content/" + f), f
+        assert xpi.read("content/licenses/pdf-lib.txt")
+        assert "Timer.sys.mjs" in xpi.read("bootstrap.js").decode()
         assert 'pref("extensions.zotero.paperbridge.pairingToken", "")' in xpi.read("prefs.js").decode()
         js = xpi.read("content/scripts/paperbridge.js").decode()
-        for term in ["paperbridge-toolbar-read", "paperbridge-toolbar-help", "nextPageRects"]:
+        for term in ["paperbridge-toolbar-read", "paperbridge-toolbar-help", "nextPageRects", "fullDocumentGeometry", "readFullPdfGeometry"]:
             assert term in js, term
 
 print(json.dumps({"bundle": str(bundle), "chrome": extension["version"], "zotero": addon["version"], "bytes": bundle.stat().st_size, "sha256": hashlib.sha256(bundle.read_bytes()).hexdigest(), "checks": "ZIP integrity, paths, versions, resources, both manuals, empty pairing default, no personal profile files: passed"}, ensure_ascii=False, indent=2))

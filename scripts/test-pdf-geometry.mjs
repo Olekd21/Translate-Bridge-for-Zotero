@@ -131,3 +131,47 @@ assert.equal(singlePage.nextPageRects, undefined);
 console.log(
   "PDF cross-page regressions passed: two-page geometry, footers excluded, missing/nonadjacent/ambiguous matches rejected, single-page preserved",
 );
+
+const laterPages = Array.from({ length: 12 }, () => makePage([]));
+laterPages.push(makePage([[40, 100, crossSelector.exact]]));
+assert.equal(
+  locateQuoteGeometry({ pages: laterPages }, crossSelector).pageIndex,
+  12,
+);
+const duplicateLocations = locateQuoteGeometry(
+  { pages: [...laterPages, laterPages[12]] },
+  crossSelector,
+);
+assert.equal(duplicateLocations.status, "ambiguous");
+assert.equal(duplicateLocations.pageIndex, undefined);
+assert.equal(duplicateLocations.rects, undefined);
+// Both reading orders find this same word geometry after dehyphenation.
+const compactQuery =
+  "These findings demonstrate robust lymphangiogenesis supporting myocardial growth and repair during chronic pressure overload induced hypertrophy";
+const sameLocation = locateQuoteGeometry(
+  {
+    pages: [
+      makePage([
+        [
+          40,
+          100,
+          compactQuery.replace("lymphangiogenesis", "lymphangio-genesis"),
+        ],
+      ]),
+    ],
+  },
+  { type: "TextQuoteSelector", exact: compactQuery },
+);
+assert.equal(sameLocation.status, "unique");
+assert.equal(sameLocation.occurrences, 1);
+const batchBoundaryPages = Array.from({ length: 4 }, () => makePage([]));
+batchBoundaryPages.push(firstPage, secondPage);
+const acrossBatch = locateQuoteGeometry(
+  { pages: batchBoundaryPages },
+  crossSelector,
+);
+assert.equal(acrossBatch.pageIndex, 4);
+assert.ok(acrossBatch.nextPageRects.length);
+console.log(
+  "Full-document geometry passed: page 13, true duplicates rejected, same-location strategies deduplicated, batch boundary cross-page match",
+);

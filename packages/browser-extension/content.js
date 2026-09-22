@@ -1,5 +1,5 @@
 (() => {
-  const currentVersion = "0.7.0";
+  const currentVersion = "0.8.0";
   if (window.__paperBridgeVersion === currentVersion) return;
   document.getElementById("paper-bridge-root")?.remove();
   window.__paperBridgeVersion = currentVersion;
@@ -943,7 +943,7 @@
       return;
     }
     syncButton.disabled = true;
-    setStatus("正在连接本地 Zotero……");
+    setStatus("正在读取并定位 PDF 全文；首次同步可能需要几秒……");
     const annotation = {
       ...selectionPayload(),
       translation: state.translation,
@@ -1026,7 +1026,7 @@
   async function openSelectionInZotero() {
     if (!state.anchor || !isPdfAnchorReady(state.anchor)) return;
     openSelectionButton.disabled = true;
-    setStatus("正在 Zotero 中定位当前段落……");
+    setStatus("正在 PDF 全文中定位当前段落；首次读取可能需要几秒……");
     try {
       const response = state.openTarget
         ? await chrome.runtime.sendMessage({

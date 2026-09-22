@@ -7,7 +7,8 @@
     "packages/matcher"
   ],
   "scripts": {
-    "test": "npm run test --workspace @paper-bridge/matcher && npm run test:geometry && npm run test:source-fetch && npm run test:reading-ui",
+    "test": "npm run test --workspace @paper-bridge/matcher && npm run test:geometry && npm run test:full-pdf && npm run test:source-fetch && npm run test:reading-ui",
+    "test:full-pdf": "node --test scripts/test-full-pdf.mjs",
     "test:reading-ui": "node --test scripts/test-reading-ui.mjs",
     "test:source-fetch": "node --test scripts/test-source-fetch.mjs",
     "test:geometry": "node scripts/test-pdf-geometry.mjs",

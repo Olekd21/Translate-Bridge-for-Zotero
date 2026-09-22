@@ -1,7 +1,7 @@
 {
   "name": "paper-bridge-zotero",
   "type": "module",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Connect Chrome Google Translate reading with local Zotero PDF highlights, translations and notes.",
   "config": {
     "addonName": "Translate Bridge for Zotero",
@@ -31,6 +31,7 @@
     "update-deps": "npm update --save"
   },
   "dependencies": {
+    "pdf-lib": "1.17.1",
     "zotero-plugin-toolkit": "^5.1.0-beta.13"
   },
   "devDependencies": {

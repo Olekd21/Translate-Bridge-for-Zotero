@@ -466,21 +466,35 @@ export function locateQuoteGeometry(
   const suffix = textTokens(selector.suffix || "");
   if (!query.length) return { status: "not-found", occurrences: 0 };
 
-  const candidates = (data.pages || []).flatMap((page, pageIndex) =>
+  const rawCandidates = (data.pages || []).flatMap((page, pageIndex) =>
     candidatesForPage(page, pageIndex, query, prefix, suffix),
   );
-  candidates.sort(
+  rawCandidates.sort(
     (left, right) =>
       right.score - left.score ||
       left.pageIndex - right.pageIndex ||
       left.startToken - right.startToken,
   );
+  // The normal and column reading orders can find the same physical words.
+  // Count distinct locations, not the number of matching strategies.
+  const distinct = new Map<string, Candidate>();
+  for (const candidate of rawCandidates) {
+    const key = `${candidate.pageIndex}:${candidate.words
+      .map((w) => w.wordIndex)
+      .sort((a, b) => a - b)
+      .join(",")}`;
+    if (!distinct.has(key)) distinct.set(key, candidate);
+  }
+  const candidates = [...distinct.values()];
   if (!candidates.length) return crossPageMatch(data, query);
+  if (candidates.length > 1) {
+    return { status: "ambiguous", occurrences: candidates.length };
+  }
 
   const best = candidates[0];
   const firstWord = best.words[0];
   return {
-    status: candidates.length === 1 ? "unique" : "ambiguous",
+    status: "unique",
     occurrences: candidates.length,
     pageIndex: best.pageIndex,
     pageLabel: String(best.pageIndex + 1),
