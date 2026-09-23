@@ -72,13 +72,28 @@ type Candidate = {
   pageHeight: number;
 };
 
+// Recognizer results are immutable and owned by the bounded PDF cache. Weak
+// keys avoid retaining old documents while reusing expensive text indexes.
+const wordCache = new WeakMap<object, { height: number; words: PageWord[] }>();
+const tokenCache = new WeakMap<PageWord[], PageToken[]>();
+const columnCache = new WeakMap<PageWord[], PageWord[]>();
+const compactCache = new WeakMap<
+  PageWord[],
+  { text: string; owners: PageWord[] }
+>();
+
 function round(value: number) {
   return Math.round(value * 1000) / 1000;
 }
 
 function textTokens(value: string): string[] {
   return Array.from(
-    normalizeText(value).matchAll(/[\p{L}\p{N}]+/gu),
+    normalizeText(value)
+      .replace(/[−–]/g, "-")
+      .replace(/([+-])\s+(?=\d)/g, "$1")
+      .matchAll(
+        /[\p{L}][\p{L}\p{N}]*|[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?|[<>=≤≥≠±]/gu,
+      ),
     (match) => match[0],
   );
 }
@@ -87,13 +102,17 @@ function isRecognizerWord(value: unknown): value is RecognizerWord {
   return (
     Array.isArray(value) &&
     value.length >= 14 &&
-    value.slice(0, 4).every((part) => typeof part === "number") &&
+    value.slice(0, 4).every((part) => Number.isFinite(part)) &&
+    value[2] > value[0] &&
+    value[3] > value[1] &&
     typeof value[13] === "string"
   );
 }
 
 function pageWords(rawPage: unknown): { height: number; words: PageWord[] } {
   if (!Array.isArray(rawPage)) return { height: 0, words: [] };
+  const cached = wordCache.get(rawPage);
+  if (cached) return cached;
   const height = Number(rawPage[1]) || 0;
   const lines = (rawPage as any)?.[2]?.[0]?.[0]?.[0]?.[4];
   if (!Array.isArray(lines)) return { height, words: [] };
@@ -117,39 +136,114 @@ function pageWords(rawPage: unknown): { height: number; words: PageWord[] } {
       charOffset += text.length + (rawWord[5] ? 1 : 0);
     });
   });
-  return { height, words };
+  const result = { height, words };
+  wordCache.set(rawPage, result);
+  return result;
 }
 
 function pageTokens(words: PageWord[]): PageToken[] {
-  return words.flatMap((word) =>
+  const cached = tokenCache.get(words);
+  if (cached) return cached;
+  const result = words.flatMap((word) =>
     textTokens(word.text).map((value) => ({ value, word })),
+  );
+  tokenCache.set(words, result);
+  return result;
+}
+
+const numericCitation = /\[\s*\d+(?:\s*[,–−-]\s*\d+)*\s*\]/g;
+function compactCharacters(value: string) {
+  // Ignore explicit bracketed references, NOT scientific numbers/gene IDs.
+  const raw = normalizeText(value)
+    .replace(numericCitation, "")
+    .replace(/[−–]/g, "-");
+  let result = "";
+  for (let i = 0; i < raw.length; ) {
+    const char = String.fromCodePoint(raw.codePointAt(i)!);
+    if (keepCompactCharacter(raw, i, char)) result += char;
+    i += char.length;
+  }
+  return result;
+}
+
+function keepCompactCharacter(raw: string, index: number, char: string) {
+  return (
+    /[\p{L}\p{N}<>=≤≥≠±]/u.test(char) ||
+    ((char === "+" || char === "-") && /^\s*\d/.test(raw.slice(index + 1))) ||
+    (char === "." &&
+      /\d/.test(raw[index + 1] || "") &&
+      (/\d/.test(raw[index - 1] || "") ||
+        ((index === 0 || /\s/.test(raw[index - 1])) &&
+          !/(?:\.|\b(?:fig|eq|no|vol|pp|sect))\s*$/.test(raw.slice(0, index)))))
   );
 }
 
-function compactCharacters(value: string) {
-  // Numeric citation styles differ between HTML and PDF text layers
-  // (for example 11,12,13,14 versus 11-14). Long fallback matches remain
-  // distinctive after removing numbers, while gene names still retain letters.
-  return normalizeText(value).replace(/[^\p{L}]+/gu, "");
+function compactIndex(words: PageWord[]) {
+  const cached = compactCache.get(words);
+  if (cached) return cached;
+  let raw = "";
+  const rawOwners: PageWord[] = [];
+  for (const word of words) {
+    const text =
+      normalizeText(word.text).replace(/[−–]/g, "-") +
+      (word.spaceAfter ? " " : "");
+    raw += text;
+    for (let i = 0; i < text.length; i++) rawOwners.push(word);
+  }
+  const citationSpans = [...raw.matchAll(numericCitation)];
+  let text = "";
+  const owners: PageWord[] = [];
+  let span = 0;
+  for (let i = 0; i < raw.length; ) {
+    const citation = citationSpans[span];
+    if (citation && i === citation.index) {
+      i += citation[0].length;
+      span++;
+      continue;
+    }
+    const char = String.fromCodePoint(raw.codePointAt(i)!);
+    if (keepCompactCharacter(raw, i, char)) {
+      text += char;
+      for (let j = 0; j < char.length; j++) owners.push(rawOwners[i]);
+    }
+    i += char.length;
+  }
+  const result = { text, owners };
+  compactCache.set(words, result);
+  return result;
 }
 
 function wordsInColumnOrder(words: PageWord[], pageWidth: number) {
+  const cached = columnCache.get(words);
+  if (cached) return cached;
   const lines = new Map<number, PageWord[]>();
   for (const word of words) {
     const line = lines.get(word.lineIndex) || [];
     line.push(word);
     lines.set(word.lineIndex, line);
   }
-  const middle = pageWidth / 2;
-  return Array.from(lines.values())
+  // Detect separated left margins rather than assuming every paper has two
+  // equal columns. Native order is still tried independently.
+  const margins = [
+    ...new Set(
+      Array.from(lines.values(), (line) =>
+        Math.min(...line.map((word) => word.rect[0])),
+      ),
+    ),
+  ].sort((a, b) => a - b);
+  const gaps = margins
+    .slice(1)
+    .flatMap((margin, i) =>
+      margin - margins[i] > pageWidth * 0.18 ? [(margin + margins[i]) / 2] : [],
+    );
+  const boundaries =
+    gaps.length > 0 && gaps.length <= 3 ? gaps : [pageWidth / 2];
+  const result = Array.from(lines.values())
     .map((line) => ({
       line,
-      column:
-        line.reduce((sum, word) => sum + (word.rect[0] + word.rect[2]) / 2, 0) /
-          line.length <
-        middle
-          ? 0
-          : 1,
+      column: boundaries.filter(
+        (boundary) => Math.min(...line.map((word) => word.rect[0])) >= boundary,
+      ).length,
       top: Math.min(...line.map((word) => word.rect[1])),
       left: Math.min(...line.map((word) => word.rect[0])),
     }))
@@ -160,6 +254,8 @@ function wordsInColumnOrder(words: PageWord[], pageWidth: number) {
         left.left - right.left,
     )
     .flatMap(({ line }) => line);
+  columnCache.set(words, result);
+  return result;
 }
 
 function compactCharacterCandidates(
@@ -172,13 +268,7 @@ function compactCharacterCandidates(
   const query = compactCharacters(queryText);
   if (query.length < 24) return [];
 
-  let page = "";
-  const owners: PageWord[] = [];
-  for (const word of words) {
-    const compact = compactCharacters(word.text);
-    page += compact;
-    owners.push(...Array.from(compact, () => word));
-  }
+  const { text: page, owners } = compactIndex(words);
 
   const candidates: Candidate[] = [];
   let cursor = 0;
@@ -220,23 +310,13 @@ function sequenceStarts(tokens: PageToken[], sequence: string[]): number[] {
   return starts;
 }
 
-function uniqueWords(tokens: PageToken[], start: number, end: number) {
-  const words: PageWord[] = [];
-  let previous = -1;
-  for (let index = start; index <= end; index += 1) {
-    const word = tokens[index].word;
-    if (word.wordIndex !== previous) words.push(word);
-    previous = word.wordIndex;
-  }
-  return words;
-}
-
 function candidatesForPage(
   rawPage: unknown,
   pageIndex: number,
   query: string[],
   prefix: string[],
   suffix: string[],
+  queryText: string,
 ): Candidate[] {
   const { height, words } = pageWords(rawPage);
   const tokens = pageTokens(words);
@@ -265,13 +345,17 @@ function candidatesForPage(
       endToken,
       score: 1 + (prefixMatches ? 0.5 : 0) + (suffixMatches ? 0.5 : 0),
       method: "exact-token-sequence" as const,
-      words: uniqueWords(tokens, startToken, endToken),
+      // Include punctuation between boundary words, retaining decimal points
+      // and citation brackets for scientific-number validation.
+      words: words.slice(
+        tokens[startToken].word.wordIndex,
+        tokens[endToken].word.wordIndex + 1,
+      ),
       pageHeight: height,
     };
   });
-  if (exact.length || query.length < 12) return exact;
+  if (exact.length) return exact;
 
-  const queryText = query.join(" ");
   const compact = compactCharacterCandidates(
     words,
     pageIndex,
@@ -293,78 +377,9 @@ function candidatesForPage(
     return [...columnCompact, ...compact];
   }
 
-  const maxExtraTokens = Math.max(16, Math.ceil(query.length / 2));
-  const ordered: Candidate[] = [];
-  for (let startToken = 0; startToken < tokens.length; startToken += 1) {
-    if (tokens[startToken].value !== query[0]) continue;
-    let pageCursor = startToken;
-    let queryCursor = 0;
-    while (
-      pageCursor < tokens.length &&
-      queryCursor < query.length &&
-      pageCursor - startToken <= query.length + maxExtraTokens
-    ) {
-      let consumedPageTokens = 0;
-      for (let width = 1; width <= 3; width += 1) {
-        const joined = tokens
-          .slice(pageCursor, pageCursor + width)
-          .map((token) => token.value)
-          .join("");
-        if (joined === query[queryCursor]) {
-          consumedPageTokens = width;
-          break;
-        }
-      }
-      if (consumedPageTokens) {
-        queryCursor += 1;
-        pageCursor += consumedPageTokens;
-      } else {
-        pageCursor += 1;
-      }
-    }
-    if (queryCursor === query.length) {
-      const endToken = pageCursor - 1;
-      const extraTokens = endToken - startToken + 1 - query.length;
-      ordered.push({
-        pageIndex,
-        startToken,
-        endToken,
-        score: 0.9 - extraTokens * 0.005,
-        method: "ordered-token-window" as const,
-        words: uniqueWords(tokens, startToken, endToken),
-        pageHeight: height,
-      });
-    }
-  }
-  if (ordered.length) return ordered;
-
-  const fragmentLength = Math.min(7, Math.floor(query.length / 3));
-  const leading = sequenceStarts(tokens, query.slice(0, fragmentLength));
-  const trailing = sequenceStarts(tokens, query.slice(-fragmentLength));
-  const maxWindowTokens = query.length + 16;
-  const fallback: Candidate[] = [];
-  for (const startToken of leading) {
-    for (const trailingStart of trailing) {
-      if (
-        trailingStart < startToken + fragmentLength ||
-        trailingStart - startToken > maxWindowTokens
-      ) {
-        continue;
-      }
-      const endToken = trailingStart + fragmentLength - 1;
-      fallback.push({
-        pageIndex,
-        startToken,
-        endToken,
-        score: 0.75,
-        method: "fragment-window",
-        words: uniqueWords(tokens, startToken, endToken),
-        pageHeight: height,
-      });
-      break;
-    }
-  }
-  return fallback;
+  // Matching only the ends or skipping arbitrary middle words can turn a
+  // negated/different claim into a writable highlight. Require the full text.
+  return [];
 }
 
 function rectsForCandidate(candidate: Candidate): Rect[] {
@@ -375,7 +390,25 @@ function rectsForCandidate(candidate: Candidate): Rect[] {
     grouped.set(word.lineIndex, line);
   }
 
-  return Array.from(grouped.values()).map((line) => {
+  const segments: PageWord[][] = [];
+  for (const line of grouped.values()) {
+    const ordered = [...line].sort((a, b) => a.rect[0] - b.rect[0]);
+    let segment: PageWord[] = [];
+    for (const word of ordered) {
+      const previous = segment[segment.length - 1];
+      if (
+        previous &&
+        word.rect[0] - previous.rect[2] >
+          Math.max(12, (word.rect[3] - word.rect[1]) * 2.5)
+      ) {
+        segments.push(segment);
+        segment = [];
+      }
+      segment.push(word);
+    }
+    if (segment.length) segments.push(segment);
+  }
+  return segments.map((line) => {
     const x1 = Math.min(...line.map((word) => word.rect[0]));
     const top = Math.min(...line.map((word) => word.rect[1]));
     const x2 = Math.max(...line.map((word) => word.rect[2]));
@@ -467,7 +500,7 @@ export function locateQuoteGeometry(
   if (!query.length) return { status: "not-found", occurrences: 0 };
 
   const rawCandidates = (data.pages || []).flatMap((page, pageIndex) =>
-    candidatesForPage(page, pageIndex, query, prefix, suffix),
+    candidatesForPage(page, pageIndex, query, prefix, suffix, selector.exact),
   );
   rawCandidates.sort(
     (left, right) =>
@@ -485,7 +518,15 @@ export function locateQuoteGeometry(
       .join(",")}`;
     if (!distinct.has(key)) distinct.set(key, candidate);
   }
-  const candidates = [...distinct.values()];
+  let candidates = [...distinct.values()];
+  // Use context only when one exact location has strictly stronger evidence.
+  // Ties remain ambiguous and never return writable geometry.
+  if (candidates[0]?.score > 1) {
+    const bestScore = candidates[0].score;
+    candidates = candidates.filter(
+      (candidate) => candidate.score === bestScore,
+    );
+  }
   if (!candidates.length) return crossPageMatch(data, query);
   if (candidates.length > 1) {
     return { status: "ambiguous", occurrences: candidates.length };

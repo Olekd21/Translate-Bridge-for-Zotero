@@ -5,7 +5,7 @@ import {test} from 'node:test';
 
 const background = await readFile('packages/browser-extension/background.js','utf8');
 const content = await readFile('packages/browser-extension/content.js','utf8');
-function backgroundHarness({token='test', status=200, pending=false}={}) {
+function backgroundHarness({token='test', status=200, pending=false, payload}={}) {
   const storage={pairingToken:token,outbox:[],reviewArchive:[]};
   const timers=new Map(); let counter=0, requests=0;
   const noop=()=>{};
@@ -17,7 +17,7 @@ function backgroundHarness({token='test', status=200, pending=false}={}) {
     fetch:async (_url,{signal})=>{
       requests++;
       if(pending) return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted'))));
-      return {ok:status===200,status,text:async()=>JSON.stringify({ok:status===200})};
+      return {ok:status===200,status,text:async()=>JSON.stringify(payload || {ok:status===200})};
     }});
   vm.runInContext(background,context);
   return {context,storage,timers,requests:()=>requests};
@@ -44,6 +44,15 @@ test('missing pairing and HTTP 4xx fail without an outbox entry; transient failu
     assert.equal(h.storage.outbox.length,options.status===503?1:0);
     assert.equal(h.timers.size,0);
   }
+});
+test('legacy HTTP 200 without a highlight is not counted as sync or removed from outbox',async()=>{
+  const h=backgroundHarness({payload:{ok:true,nativePdfHighlightCreated:false,error:'no match'}});
+  const response=await vm.runInContext('syncAnnotation({id:"one"})',h.context);
+  assert.equal(response.ok,false);assert.equal(response.queued,false);
+  h.storage.outbox=[{annotation:{id:'pending'},reason:'offline'}];
+  const retry=await vm.runInContext('retryOutbox()',h.context);
+  assert.equal(retry.synced,0);assert.equal(retry.remaining,1);
+  assert.equal(h.storage.outbox[0].annotation.id,'pending');
 });
 
 function uiHarness(functionName) {

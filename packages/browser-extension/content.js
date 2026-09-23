@@ -1,5 +1,5 @@
 (() => {
-  const currentVersion = "0.8.1";
+  const currentVersion = "1.0.0";
   if (window.__paperBridgeVersion === currentVersion) return;
   document.getElementById("paper-bridge-root")?.remove();
   window.__paperBridgeVersion = currentVersion;

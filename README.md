@@ -4,7 +4,9 @@
 
 在 Chrome 中用内置 Google 翻译阅读论文网页，选中中文句子，将对应英文原文匹配回本机 Zotero PDF，并同步高亮、中文译文与个人笔记。也支持直接选择英文原文。无需配置 Google 翻译 API 或 AI API key。
 
-[下载最新安装包](https://github.com/jinwenpang0523-alt/Translate-Bridge-for-Zotero/releases/latest) · [安装与用户手册](docs/用户手册.md) · [反馈问题](https://github.com/jinwenpang0523-alt/Translate-Bridge-for-Zotero/issues)
+[下载最新安装包](https://github.com/Olekd21/Translate-Bridge-for-Zotero/releases/latest) · [安装与用户手册](docs/用户手册.md) · [反馈问题](https://github.com/Olekd21/Translate-Bridge-for-Zotero/issues)
+
+**1.0.0**：Chrome 与 Zotero 插件统一版本号，同一包兼容 Zotero 9/10。跨领域测试方法、结果与适用边界见[稳定性核查报告](docs/稳定性核查-20260923.md)。
 
 ## 当前能力
 
@@ -20,13 +22,13 @@
 
 ## 安装
 
-在 Releases 下载 `translate-bridge-for-zotero-0.8.1.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
+在 Releases 下载 `translate-bridge-for-zotero-1.0.0.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
 
 需要同一电脑上的 Zotero 桌面版、Chrome 138+ 以及带文字层的论文 PDF。Zotero Connector 可选；不依赖 Better Notes、LLM-for-Zotero、Zotero PDF Translate、Style 或 Better BibTeX。详细步骤见 [用户手册](docs/用户手册.md)。分发产物位于 `dist/`：
 
-- `translate-bridge-chrome-0.8.1.zip`
-- `translate-bridge-zotero-0.6.1.xpi`
-- `translate-bridge-for-zotero-0.8.1.zip`（完整安装包）
+- `translate-bridge-chrome-1.0.0.zip`
+- `translate-bridge-zotero-1.0.0.xpi`
+- `translate-bridge-for-zotero-1.0.0.zip`（完整安装包）
 
 ## 从源码构建与验证
 

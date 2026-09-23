@@ -2,7 +2,7 @@
 
 ## 加载
 
-1. 解压安装包，找到 `Translate-Bridge-Chrome-0.8.1` 文件夹。
+1. 解压安装包，找到 `Translate-Bridge-Chrome-1.0.0` 文件夹。
 2. 打开 `chrome://extensions/`，开启“开发者模式”。
 3. 点击“加载已解压的扩展程序”，选择解压后的文件夹。
 4. 安装 Zotero 插件后，从 Zotero“工具 → Translate Bridge for Zotero → 复制配对码”获取配对码。

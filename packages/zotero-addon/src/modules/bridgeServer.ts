@@ -379,8 +379,8 @@ class AnnotationEndpoint {
 
       const located = await findPDFMatch(parent, annotation.selector);
       if (!located.attachment) {
-        return jsonResponse(200, {
-          ok: true,
+        return jsonResponse(404, {
+          ok: false,
           itemKey: parent.key,
           itemMatchReason: parentSelection.reason,
           duplicateCandidates: parentSelection.candidateCount,
@@ -393,8 +393,8 @@ class AnnotationEndpoint {
         located.match.pageIndex === undefined ||
         !located.match.rects?.length
       ) {
-        return jsonResponse(200, {
-          ok: true,
+        return jsonResponse(422, {
+          ok: false,
           itemKey: parent.key,
           itemMatchReason: parentSelection.reason,
           duplicateCandidates: parentSelection.candidateCount,

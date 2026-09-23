@@ -79,7 +79,10 @@ async function callZotero(path, body, requireToken = false) {
     payload = { ok: false, error: text || `HTTP ${response.status}` };
   }
 
-  if (!response.ok || payload.ok === false) {
+  // Older add-ons returned HTTP 200 even when no annotation was written.
+  // Never remove those entries from the outbox as successfully synchronized.
+  const unwrittenAnnotation = path.endsWith('/annotations') && payload.nativePdfHighlightCreated === false;
+  if (!response.ok || payload.ok === false || unwrittenAnnotation) {
     const error = new Error(
       payload.error || `Zotero 返回 HTTP ${response.status}`,
     );

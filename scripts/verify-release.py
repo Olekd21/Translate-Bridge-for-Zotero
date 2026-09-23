@@ -8,6 +8,8 @@ from zipfile import ZipFile
 root = Path(__file__).resolve().parents[1]
 extension = json.loads((root / "packages/browser-extension/manifest.json").read_text(encoding="utf-8"))
 addon = json.loads((root / "packages/zotero-addon/package.json").read_text(encoding="utf-8"))
+project = json.loads((root / "package.json").read_text(encoding="utf-8"))
+assert project['version'] == extension['version'] == addon['version'], 'Project, Chrome and Zotero release versions must match'
 bundle = root / "dist" / f"translate-bridge-for-zotero-{extension['version']}.zip"
 folder = f"Translate-Bridge-Chrome-{extension['version']}/"
 xpi_name = f"Translate-Bridge-Zotero-{addon['version']}.xpi"
