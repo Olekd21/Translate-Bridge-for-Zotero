@@ -37,13 +37,16 @@ saveButton.addEventListener("click", async () => {
       type: "paperbridge:ping",
     });
     const needsUpdate = response?.ok && !response.capabilities?.fullDocumentGeometry;
+    const needsCompatibilityUpdate = response?.ok && Number.parseInt(response.zoteroVersion || '0', 10) >= 10 && !response.capabilities?.pdfProtocol;
     setStatus(
       response?.ok
-        ? (needsUpdate
+        ? (needsCompatibilityUpdate
+          ? `连接成功，但 PDF 接口不兼容 Zotero ${response.zoteroVersion}。请更新译桥 Zotero 插件。`
+          : needsUpdate
           ? `连接成功，但 Zotero 端仍为 ${response.version}，仅支持前 5 页。请安装 0.6.0 或更高版本 XPI 并重启 Zotero。`
-          : `连接成功：${response.name} ${response.version} · 已支持 PDF 全文定位`)
+          : `连接成功：译桥 ${response.version}${response.zoteroVersion ? ` · Zotero ${response.zoteroVersion}` : ''} · PDF 全文定位${response.capabilities?.isolatedPdfWorker ? ' · 独立读取' : '（建议更新译桥以支持 Zotero 10）'}`)
         : `连接失败：${response?.error || "未知错误"}`,
-      response?.ok && !needsUpdate ? "good" : "warn",
+      response?.ok && !needsUpdate && !needsCompatibilityUpdate ? "good" : "warn",
     );
   } catch (error) {
     setStatus(

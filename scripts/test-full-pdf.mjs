@@ -10,7 +10,7 @@ const bundle = await build({
   format: "esm",
   write: false,
 });
-const { extractFullPdf, PdfGeometryCache, readFullPdfGeometry, clearPdfCache } =
+const { extractFullPdf, PdfGeometryCache, readFullPdfGeometry, clearPdfCache, createPdfRecognizer } =
   await import(
     `data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString("base64")}`
   );
@@ -125,20 +125,64 @@ test("Zotero adapter checks file changes and native worker capability", async ()
     }),
   };
   globalThis.Zotero = {
-    PDFWorker: {
-      _enqueue: async (callback) => callback(),
-      _query: async () => ({ totalPages: 1, pages: [[]] }),
-    },
+    PDFWorker: new (class {
+      getRecognizerData() { return this._query('getRecognizerData'); }
+      async _enqueue(callback) { return callback(); }
+      async _query() { return { totalPages: 1, pages: [[]] }; }
+    })(),
   };
   const attachment = { id: 1, getFilePathAsync: async () => "fixture.pdf" };
   await assert.rejects(readFullPdfGeometry(attachment), /文件发生变化/);
   clearPdfCache();
   globalThis.Zotero.PDFWorker = {};
-  await assert.rejects(readFullPdfGeometry(attachment), /不支持全文/);
+  await assert.rejects(readFullPdfGeometry(attachment), /尚不兼容/);
   await assert.rejects(
     readFullPdfGeometry({ getFilePathAsync: async () => false }),
     /未下载/,
   );
   delete globalThis.Zotero;
   delete globalThis.ztoolkit;
+});
+
+test('Zotero 9 and 10 route their native protocol on a private worker, never the shared queue', async () => {
+  for (const action of ['getRecognizerData', 'pdf.getRecognizerData']) {
+    let terminated = 0;
+    class NativeWorker {
+      _worker = { terminate() { terminated++; } };
+      async _enqueue(fn) { return fn(); }
+      async _query(actual, {buf}) {
+        assert.equal(actual, action);
+        assert.equal(buf.byteLength, 3);
+        return {totalPages: 1, pages: [[]]};
+      }
+    }
+    NativeWorker.prototype.getRecognizerData = action.startsWith('pdf.')
+      ? function() { return this._query('pdf.getRecognizerData'); }
+      : function() { return this._query('getRecognizerData'); };
+    const shared = new NativeWorker();
+    shared._enqueue = () => assert.fail('Shared queue must not be used');
+    const reader = createPdfRecognizer(shared);
+    assert.equal((await reader.recognize(new Uint8Array([1,2,3]))).totalPages, 1);
+    reader.close();
+    assert.equal(terminated, 1);
+    await assert.rejects(reader.recognize(new Uint8Array()), /已结束/);
+  }
+  assert.throws(() => createPdfRecognizer({getRecognizerData() { return 'unknown'; }}), /尚不兼容/);
+});
+
+test('unresponsive native PDF worker times out and only its private instance is terminated', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let terminations = 0;
+  class HangingWorker {
+    _worker = { terminate() { terminations++; } };
+    getRecognizerData() { return this._query('pdf.getRecognizerData'); }
+    async _enqueue(fn) { return fn(); }
+    _query() { return new Promise(() => {}); }
+  }
+  const reader = createPdfRecognizer(new HangingWorker());
+  const pending = assert.rejects(reader.recognize(new Uint8Array([1])), /超过 20 秒/);
+  t.mock.timers.tick(20001);
+  await pending;
+  reader.close();
+  assert.equal(terminations, 1);
 });

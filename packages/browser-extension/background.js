@@ -52,9 +52,15 @@ chrome.runtime.onInstalled.addListener((details) => {
 async function callZotero(path, body, requireToken = false) {
   const { pairingToken } = await getSettings();
   if (requireToken && !pairingToken) {
-    throw new Error("尚未填写 Zotero 配对码。请打开扩展设置完成配对。");
+    const error = new Error("尚未填写 Zotero 配对码。请打开扩展设置完成配对。");
+    error.retryable = false;
+    throw error;
   }
 
+  const controller = new AbortController();
+  const timeoutMs = /\/(annotations|open-selection)$/.test(path) ? 120000 : 20000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
   const response = await fetch(`${ZOTERO_BASE_URL}${path}`, {
     method: "POST",
     headers: {
@@ -62,6 +68,7 @@ async function callZotero(path, body, requireToken = false) {
       ...(pairingToken ? { "X-Paper-Bridge-Token": pairingToken } : {}),
     },
     body: JSON.stringify(body ?? {}),
+    signal: controller.signal,
   });
 
   const text = await response.text();
@@ -80,6 +87,18 @@ async function callZotero(path, body, requireToken = false) {
     throw error;
   }
   return payload;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeout = new Error(path.endsWith('/annotations')
+        ? "同步请求超时，保存结果尚不确定。请先检查 Zotero 中是否已生成高亮，避免重复同步。"
+        : "Zotero 请求超时，请检查阅读器状态后重试；无需重新输入配对码。");
+      timeout.retryable = false;
+      throw timeout;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function enqueue(annotation, reason) {

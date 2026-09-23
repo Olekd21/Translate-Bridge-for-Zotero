@@ -1,7 +1,13 @@
 import pkg from "../../package.json";
 import { type TextQuoteSelector } from "./textMatcher";
 import { locateQuoteGeometry, type GeometryMatch } from "./pdfGeometry";
-import { readFullPdfGeometry, clearPdfCache } from "./fullPdf";
+import {
+  readFullPdfGeometry,
+  clearPdfCache,
+  pdfWorkerProtocol,
+  type PdfReadDiagnostics,
+} from "./fullPdf";
+import { withDeadline } from "./deadline";
 
 const { config } = pkg;
 const PING_PATH = "/paperbridge/ping";
@@ -197,7 +203,12 @@ function firstPdfAttachment(parent: any) {
 async function findPDFMatch(
   parent: any,
   selector: TextQuoteSelector,
-): Promise<{ attachment?: any; match: GeometryMatch; error?: string }> {
+): Promise<{
+  attachment?: any;
+  match: GeometryMatch;
+  error?: string;
+  diagnostics?: PdfReadDiagnostics;
+}> {
   const attachment = firstPdfAttachment(parent);
 
   if (!attachment) {
@@ -205,10 +216,19 @@ async function findPDFMatch(
   }
 
   try {
-    const result = await readFullPdfGeometry(attachment);
+    const diagnostics: PdfReadDiagnostics = {};
+    const result = await withDeadline(
+      readFullPdfGeometry(attachment, diagnostics),
+      95000,
+      "PDF 文件读取超时，请确认附件已完整下载到本机",
+    );
+    const started = Date.now();
+    const match = locateQuoteGeometry(result, selector);
+    diagnostics.matchMs = Date.now() - started;
     return {
       attachment,
-      match: locateQuoteGeometry(result, selector),
+      match,
+      diagnostics,
     };
   } catch (error) {
     ztoolkit.log(
@@ -309,8 +329,13 @@ class PingEndpoint {
       ok: true,
       name: config.addonName,
       version: pkg.version,
+      zoteroVersion: Zotero.version,
       paired: true,
-      capabilities: { fullDocumentGeometry: true },
+      capabilities: {
+        fullDocumentGeometry: true,
+        pdfProtocol: pdfWorkerProtocol(Zotero.PDFWorker),
+        isolatedPdfWorker: true,
+      },
     });
   }
 }
@@ -398,6 +423,7 @@ class AnnotationEndpoint {
         attachmentID: located.attachment.id,
         match: located.match,
         nativePdfHighlightCreated: true,
+        diagnostics: located.diagnostics,
       });
     } catch (error) {
       ztoolkit.log("Translate Bridge for Zotero request failed", error);
@@ -456,10 +482,14 @@ class OpenAnnotationEndpoint {
         });
       }
 
-      await (Zotero.Reader as any).open(
-        attachment.id,
-        { annotationID: annotationKey },
-        {},
+      await withDeadline(
+        (Zotero.Reader as any).open(
+          attachment.id,
+          { annotationID: annotationKey },
+          {},
+        ),
+        15000,
+        "PDF 打开等待超过 15 秒，请在 Zotero 中确认阅读器是否已打开",
       );
       (Zotero as any).getMainWindow?.()?.focus?.();
       return jsonResponse(200, {
@@ -507,7 +537,11 @@ class OpenDocumentEndpoint {
           error: "该文献条目没有 PDF 附件",
         });
       }
-      await (Zotero.Reader as any).open(attachment.id);
+      await withDeadline(
+        (Zotero.Reader as any).open(attachment.id),
+        15000,
+        "PDF 打开等待超过 15 秒，请在 Zotero 中确认阅读器是否已打开",
+      );
       (Zotero as any).getMainWindow?.()?.focus?.();
       return jsonResponse(200, {
         ok: true,
@@ -573,16 +607,25 @@ class OpenSelectionEndpoint {
               : "已检索 PDF 全文，未找到对应文字；请确认网页与 PDF 版本一致，且 PDF 文字可以选择。"),
         });
       }
-      await (Zotero.Reader as any).open(
-        located.attachment.id,
-        { pageIndex: located.match.pageIndex },
-        {},
+      const openStarted = Date.now();
+      await withDeadline(
+        (Zotero.Reader as any).open(
+          located.attachment.id,
+          { pageIndex: located.match.pageIndex },
+          {},
+        ),
+        15000,
+        "已完成文字定位，但 PDF 阅读器超过 15 秒未返回；请在 Zotero 中确认打开状态",
       );
       (Zotero as any).getMainWindow?.()?.focus?.();
       return jsonResponse(200, {
         ok: true,
         attachmentID: located.attachment.id,
         match: located.match,
+        diagnostics: {
+          ...located.diagnostics,
+          openMs: Date.now() - openStarted,
+        },
       });
     } catch (error) {
       ztoolkit.log(

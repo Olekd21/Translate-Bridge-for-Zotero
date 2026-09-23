@@ -1,5 +1,5 @@
 (() => {
-  const currentVersion = "0.8.0";
+  const currentVersion = "0.8.1";
   if (window.__paperBridgeVersion === currentVersion) return;
   document.getElementById("paper-bridge-root")?.remove();
   window.__paperBridgeVersion = currentVersion;
@@ -10,6 +10,8 @@
     translator: null,
     translating: false,
     mappingInProgress: false,
+    syncing: false,
+    locating: false,
     color: "#ffd400",
     draftKey: "",
     drafts: new Map(),
@@ -794,9 +796,9 @@
     noteWrap.hidden = !hasAnchor;
     colorWrap.hidden = !hasAnchor;
     actions.hidden = !hasAnchor;
-    syncButton.disabled = !hasAnchor || !isPdfAnchorReady(state.anchor);
+    syncButton.disabled = state.syncing || !hasAnchor || !isPdfAnchorReady(state.anchor);
     openSelectionButton.disabled =
-      !hasAnchor || !isPdfAnchorReady(state.anchor);
+      state.locating || !hasAnchor || !isPdfAnchorReady(state.anchor);
     openSelectionButton.title = openSelectionButton.disabled
       ? "选择一段文字后可定位"
       : "在 Zotero PDF 中定位当前段落";
@@ -935,6 +937,7 @@
   }
 
   async function syncAnnotation() {
+    if (state.syncing) return;
     if (!state.anchor || !isPdfAnchorReady(state.anchor)) {
       setStatus(
         "尚未取得对应英文原文，当前中文选择不能直接发送到 PDF。",
@@ -942,7 +945,13 @@
       );
       return;
     }
+    state.syncing = true;
+    const requestAnchor = state.anchor;
+    const started = Date.now();
     syncButton.disabled = true;
+    const slowTimer = setTimeout(() => {
+      if (state.anchor === requestAnchor) setStatus("仍在等待 Zotero 读取 PDF；请勿重复同步。超过时限会显示原因。", "warn");
+    }, 8000);
     setStatus("正在读取并定位 PDF 全文；首次同步可能需要几秒……");
     const annotation = {
       ...selectionPayload(),
@@ -957,13 +966,14 @@
         type: "paperbridge:sync",
         annotation,
       });
+      if (state.anchor !== requestAnchor) return;
       if (response?.ok) {
         if (response.nativePdfHighlightCreated) {
           const page = response.match?.pageLabel
             ? `第 ${response.match.pageLabel} 页`
             : "对应位置";
           setStatus(
-            `已在 Zotero PDF ${page}创建原生高亮；译文和笔记已附在批注中`,
+            `已在 Zotero PDF ${page}创建原生高亮；译文和笔记已附在批注中（${((Date.now() - started) / 1000).toFixed(1)} 秒）`,
             "good",
           );
           state.openTarget = {
@@ -984,6 +994,7 @@
         setStatus(response?.error || "同步失败", "warn");
       }
     } catch (error) {
+      if (state.anchor !== requestAnchor) return;
       const message = error instanceof Error ? error.message : String(error);
       setStatus(
         /Extension context invalidated/i.test(message)
@@ -992,6 +1003,8 @@
         "warn",
       );
     } finally {
+      clearTimeout(slowTimer);
+      state.syncing = false;
       syncButton.disabled = !state.anchor || !isPdfAnchorReady(state.anchor);
     }
   }
@@ -1024,7 +1037,14 @@
   }
 
   async function openSelectionInZotero() {
+    if (state.locating) return;
     if (!state.anchor || !isPdfAnchorReady(state.anchor)) return;
+    state.locating = true;
+    const requestAnchor = state.anchor;
+    const started = Date.now();
+    const slowTimer = setTimeout(() => {
+      if (state.anchor === requestAnchor) setStatus("仍在等待 PDF 读取或阅读器打开；超过时限会显示具体原因。", "warn");
+    }, 8000);
     openSelectionButton.disabled = true;
     setStatus("正在 PDF 全文中定位当前段落；首次读取可能需要几秒……");
     try {
@@ -1037,16 +1057,18 @@
             type: "paperbridge:open-selection",
             annotation: selectionPayload(),
           });
+      if (state.anchor !== requestAnchor) return;
       const page = response?.match?.pageLabel
         ? `第 ${response.match.pageLabel} 页`
         : "对应位置";
       setStatus(
         response?.ok
-          ? `已在 Zotero 中打开${page}`
+          ? `已在 Zotero 中打开${page}（${((Date.now() - started) / 1000).toFixed(1)} 秒${response.diagnostics?.cacheHit ? '，已复用缓存' : ''}）`
           : response?.error || "未能定位当前段落",
         response?.ok ? "good" : "warn",
       );
     } catch (error) {
+      if (state.anchor !== requestAnchor) return;
       const message = error instanceof Error ? error.message : String(error);
       setStatus(
         /Extension context invalidated/i.test(message)
@@ -1055,6 +1077,8 @@
         "warn",
       );
     } finally {
+      clearTimeout(slowTimer);
+      state.locating = false;
       openSelectionButton.disabled =
         !state.anchor || !isPdfAnchorReady(state.anchor);
     }

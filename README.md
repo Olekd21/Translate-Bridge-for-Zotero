@@ -20,13 +20,13 @@
 
 ## 安装
 
-在 Releases 下载 `translate-bridge-for-zotero-0.8.0.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
+在 Releases 下载 `translate-bridge-for-zotero-0.8.1.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
 
-需要同一电脑上的 Zotero 桌面版、Chrome 138+ 以及带文字层的论文 PDF。Zotero Connector 可选；不依赖 LLM-for-Zotero、Zotero PDF Translate、Style 或 Better BibTeX。详细步骤见 [用户手册](docs/用户手册.md)。分发产物位于 `dist/`：
+需要同一电脑上的 Zotero 桌面版、Chrome 138+ 以及带文字层的论文 PDF。Zotero Connector 可选；不依赖 Better Notes、LLM-for-Zotero、Zotero PDF Translate、Style 或 Better BibTeX。详细步骤见 [用户手册](docs/用户手册.md)。分发产物位于 `dist/`：
 
-- `translate-bridge-chrome-0.8.0.zip`
-- `translate-bridge-zotero-0.6.0.xpi`
-- `translate-bridge-for-zotero-0.8.0.zip`（完整安装包）
+- `translate-bridge-chrome-0.8.1.zip`
+- `translate-bridge-zotero-0.6.1.xpi`
+- `translate-bridge-for-zotero-0.8.1.zip`（完整安装包）
 
 ## 从源码构建与验证
 
