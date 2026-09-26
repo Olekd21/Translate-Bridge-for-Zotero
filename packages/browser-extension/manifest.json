@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Translate Bridge for Zotero",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "minimum_chrome_version": "138",
   "description": "Connect Chrome Google Translate reading with Zotero PDF highlights, translations and notes.",
   "permissions": ["activeTab", "scripting", "storage"],

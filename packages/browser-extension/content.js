@@ -1,5 +1,5 @@
 (() => {
-  const currentVersion = "1.0.1";
+  const currentVersion = "1.0.2";
   if (window.__paperBridgeVersion === currentVersion) return;
   document.getElementById("paper-bridge-root")?.remove();
   window.__paperBridgeVersion = currentVersion;
@@ -34,6 +34,7 @@
   ];
   const originalTextByElement = new WeakMap();
   const originalTextById = new Map();
+  const originalTextBySentence = new WeakMap();
   const textContainerSelector =
     "p, li, blockquote, figcaption, td, th, h1, h2, h3, h4, h5, h6, div";
 
@@ -54,7 +55,7 @@
             <svg viewBox="0 0 36 36"><rect x="1" y="1" width="34" height="34" rx="10"/><path d="M8.5 23.5c2.6-7.2 7.2-10.8 9.5-10.8s6.9 3.6 9.5 10.8M9 20.8v5.1M27 20.8v5.1"/></svg>
           </span>
           <span>
-            <span class="pb-kicker">Source ↔ Zotero</span>
+            <span class="pb-kicker">Source ↔ Zotero · ${currentVersion}</span>
             <span class="pb-title">Translate Bridge for Zotero</span>
           </span>
         </div>
@@ -146,6 +147,9 @@
   }
 
   function rememberEnglishContainers(scope = document) {
+    // Mutation records can refer to text detached before observer delivery.
+    // Skip it without aborting the rest of the batch of valid paragraphs.
+    if (!scope || !scope.isConnected) return;
     const candidates = [
       ...(scope.matches?.(textContainerSelector) ? [scope] : []),
       ...Array.from(scope.querySelectorAll?.(textContainerSelector) || []),
@@ -163,11 +167,13 @@
             `${location.href.split("#")[0]}#${element.id}`,
             text,
           );
+        if (document.readyState !== "loading") preserveSentenceBoundaries(element);
       }
     }
   }
 
   rememberEnglishContainers();
+  document.addEventListener("DOMContentLoaded", () => rememberEnglishContainers(), { once: true });
   new MutationObserver((records) => {
     for (const record of records) {
       if (root.contains(record.target)) continue;
@@ -376,6 +382,77 @@
     return saved?.url === location.href.split("#")[0] ? saved.text : "";
   }
 
+  function preserveSentenceBoundaries(element) {
+    // Keep an actual English sentence attached to its DOM range before Chrome
+    // translates it. No sentence-order or translation-similarity guess is used.
+    if (!("Segmenter" in Intl) || element.querySelector("[data-pb-sentence]")) return;
+    if (element.closest("nav, header, footer, [contenteditable=true]") ||
+        element.querySelector("script, style, pre, code, math, svg, input, textarea")) return;
+    const raw = element.textContent;
+    if (!looksPrimarilyEnglish(raw) || raw.length > 20000) return;
+    const segments = Array.from(new Intl.Segmenter("en", { granularity: "sentence" }).segment(raw));
+    if (segments.length < 2 || segments.length > 100) return;
+    const texts = [];
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let offset = 0;
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      texts.push({ node, start: offset, end: offset + node.length });
+      offset += node.length;
+    }
+    // Work backwards so earlier text offsets remain valid after extraction.
+    for (const segment of segments.reverse()) {
+      const start = segment.index;
+      const end = start + segment.segment.length;
+      const first = texts.find(t => t.end > start);
+      const last = texts.find(t => t.end >= end && t.start < end);
+      if (!first || !last || !segment.segment.trim()) continue;
+      const range = document.createRange();
+      range.setStart(first.node, start - first.start);
+      range.setEnd(last.node, end - last.start);
+      // Do not split an inline element with an ID: cloning that boundary could
+      // create duplicate publisher link targets. Fall back to paragraph cache.
+      const splitsIdentifiedElement = (node) => {
+        for (let parent = node.parentElement; parent && parent !== element; parent = parent.parentElement)
+          if (parent.id) return true;
+        return false;
+      };
+      if (splitsIdentifiedElement(first.node) || splitsIdentifiedElement(last.node)) continue;
+      const span = document.createElement("span");
+      span.dataset.pbSentence = "";
+      span.appendChild(range.extractContents());
+      range.insertNode(span);
+      originalTextBySentence.set(span, {
+        url: location.href.split("#")[0],
+        text: normalizedReadableText(segment.segment),
+      });
+    }
+  }
+
+  function capturedSentenceSelection(element, selectionRange, originalParagraph) {
+    const pieces = [];
+    for (const span of element.querySelectorAll("[data-pb-sentence]")) {
+      if (!selectionRange.intersectsNode(span)) continue;
+      const range = selectionRange.cloneRange();
+      const bounds = document.createRange();
+      bounds.selectNodeContents(span);
+      if (range.compareBoundaryPoints(Range.START_TO_START, bounds) < 0)
+        range.setStart(bounds.startContainer, bounds.startOffset);
+      if (range.compareBoundaryPoints(Range.END_TO_END, bounds) > 0)
+        range.setEnd(bounds.endContainer, bounds.endOffset);
+      const selected = normalizedReadableText(range.toString());
+      if (!compactChinese(selected)) continue;
+      const saved = originalTextBySentence.get(span);
+      if (!saved || saved.url !== location.href.split("#")[0] ||
+          !originalParagraph.includes(saved.text) ||
+          compactChinese(selected) !== compactChinese(span.textContent)) return null;
+      pieces.push({ selected, original: saved.text });
+    }
+    if (!pieces.length || compactChinese(pieces.map(p => p.selected).join(" ")) !== compactChinese(selectionRange.toString())) return null;
+    const source = pieces.map(p => p.original).join(" ");
+    return originalParagraph.includes(source) ? source : null;
+  }
+
   function buildAnchor(selection) {
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed)
       return null;
@@ -415,6 +492,7 @@
             : "") ||
           "",
         containerId: uniqueId ? id : "",
+        capturedSentenceSource: capturedSentenceSelection(element, clipped, capturedOriginal(element)),
       });
     }
     const index = paragraph.indexOf(exact);
@@ -767,6 +845,8 @@
       };
     }
     const originalParagraph = await recoverOriginalParagraph(anchor);
+    if (anchor.capturedSentenceSource && originalParagraph.includes(anchor.capturedSentenceSource))
+      return mappedEnglishAnchor(anchor, originalParagraph, anchor.capturedSentenceSource, 1, "captured-sentence-range");
     const fastMatch = fastPositionMapping(anchor, originalParagraph);
     if (fastMatch) return fastMatch;
     const candidates = shortlistMappingCandidates(anchor, originalParagraph);
