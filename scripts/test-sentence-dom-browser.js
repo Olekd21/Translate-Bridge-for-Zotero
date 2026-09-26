@@ -48,6 +48,16 @@ async (page) => {
   await select(2,2,true);
   if (!await page.locator(".pb-sync").isDisabled()) throw new Error("Partial clause silently expanded");
   passed.push("partial clause never silently expanded");
+  await page.evaluate(() => Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async value=>{globalThis.copiedDiagnostic=value;}}}));
+  await page.locator(".pb-diagnostics").click();
+  const diagnostic=await page.evaluate(()=>JSON.parse(globalThis.copiedDiagnostic));
+  if(diagnostic.blocks[0]?.reason!=="partial-sentence-boundary" || /配对码|The first|Rev-nAAC/.test(JSON.stringify(diagnostic)))throw new Error("Diagnostic reason or privacy check failed");
+  passed.push("copy diagnostics reports boundary failure without article text");
+  await page.locator(".pb-boundary-details").click();
+  const detailed=await page.evaluate(()=>JSON.parse(globalThis.copiedDiagnostic));
+  const boundary=detailed.blocks[0]?.boundary;
+  if(boundary?.omittedBefore!==data.chinese[2].slice(0,6)||boundary?.omittedAfter!==""||boundary?.markerEnglish!==data.english[2]||boundary?.selected!==data.chinese[2].slice(6))throw new Error("Detailed boundary evidence differs from selected range");
+  passed.push("opt-in boundary details identify omitted text and original sentence");
   const inlineText = await page.evaluate(() => {
     const p=document.createElement("div");p.id="inline-paragraph";
     p.innerHTML='The cardiac function was measured after surgery. The <i>Rev-nAAC</i> group recovered by 8 weeks (<a id="citation-test" href="#reference-test">Figure 2A</a>). The control group remained unchanged.';

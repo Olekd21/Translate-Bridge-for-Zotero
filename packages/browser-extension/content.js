@@ -1,5 +1,5 @@
 (() => {
-  const currentVersion = "1.0.2";
+  const currentVersion = "1.0.6";
   if (window.__paperBridgeVersion === currentVersion) return;
   document.getElementById("paper-bridge-root")?.remove();
   window.__paperBridgeVersion = currentVersion;
@@ -35,6 +35,8 @@
   const originalTextByElement = new WeakMap();
   const originalTextById = new Map();
   const originalTextBySentence = new WeakMap();
+  const sentenceByKey = new Map();
+  let nextSentenceKey = 0;
   const textContainerSelector =
     "p, li, blockquote, figcaption, td, th, h1, h2, h3, h4, h5, h6, div";
 
@@ -118,6 +120,8 @@
             </button>
           </div>
           <div class="pb-status" aria-live="polite">等待选择原文</div>
+          <button class="pb-action pb-diagnostics" type="button" hidden>复制定位诊断</button>
+          <button class="pb-action pb-boundary-details" type="button" hidden>复制边界详情（含当前句子）</button>
         </div>
       </div>
     </aside>`;
@@ -151,13 +155,16 @@
     // Skip it without aborting the rest of the batch of valid paragraphs.
     if (!scope || !scope.isConnected) return;
     const candidates = [
+      ...(scope.closest?.(textContainerSelector) ? [scope.closest(textContainerSelector)] : []),
       ...(scope.matches?.(textContainerSelector) ? [scope] : []),
       ...Array.from(scope.querySelectorAll?.(textContainerSelector) || []),
     ];
     for (const element of candidates) {
       if (root.contains(element) || !isTextContainer(element)) continue;
       const text = normalizedReadableText(element.textContent);
-      if (looksPrimarilyEnglish(text)) {
+      // Never overwrite a complete English snapshot with a partially translated
+      // paragraph merely because most of its characters are still Latin.
+      if (looksPrimarilyEnglish(text) && !/[\u3400-\u9fff]/.test(text)) {
         originalTextByElement.set(element, {
           url: location.href.split("#")[0],
           text,
@@ -220,10 +227,23 @@
   const openDocumentButton = root.querySelector(".pb-open-document");
   const openSelectionButton = root.querySelector(".pb-open-selection");
   const statusNode = root.querySelector(".pb-status");
+  const diagnosticsButton = root.querySelector(".pb-diagnostics");
+  const boundaryDetailsButton = root.querySelector(".pb-boundary-details");
+  let diagnosticCopyRequest = 0;
+  let diagnosticResetTimer;
+  function resetDiagnosticButtons() {
+    diagnosticCopyRequest += 1;
+    clearTimeout(diagnosticResetTimer);
+    diagnosticsButton.textContent = "复制定位诊断";
+    boundaryDetailsButton.textContent = "复制边界详情（含当前句子）";
+    diagnosticsButton.disabled = boundaryDetailsButton.disabled = false;
+  }
 
   function setStatus(text, tone = "neutral") {
     statusNode.textContent = text;
     statusNode.dataset.tone = tone;
+    diagnosticsButton.hidden = tone !== "warn" || state.anchor?.selectedLanguage !== "zh";
+    boundaryDetailsButton.hidden = diagnosticsButton.hidden;
   }
 
   function updateTextAction() {
@@ -281,6 +301,7 @@
 
   function activateAnchor(anchor) {
     if (!anchor || anchor === state.anchor) return;
+    resetDiagnosticButtons();
     saveCurrentDraft();
     state.mappingRequestId += 1;
     state.mappingInProgress = false;
@@ -378,18 +399,43 @@
   }
 
   function capturedOriginal(element) {
-    const saved = originalTextByElement.get(element);
-    return saved?.url === location.href.split("#")[0] ? saved.text : "";
+    const url = location.href.split("#")[0];
+    let saved = originalTextByElement.get(element);
+    // A publisher or translator can replace the whole paragraph, not just a
+    // sentence span. Adopt only a complete, unique set from one detached owner.
+    const spans = [...element.querySelectorAll("[data-pb-sentence]")];
+    const records = spans.map(span => sentenceByKey.get(span.dataset.pbSentence));
+    const owner = records[0]?.paragraph;
+    if (owner && owner !== element && !owner.isConnected && records.every(record => record?.paragraph === owner && record.url === url) &&
+        spans.every(span => document.querySelectorAll(`[data-pb-sentence="${CSS.escape(span.dataset.pbSentence)}"]`).length === 1)) {
+      const previous = originalTextByElement.get(owner);
+      if (previous?.url === url) {
+        originalTextByElement.set(element, previous);
+        saved = previous;
+        for (const record of records) record.paragraph = element;
+      }
+    }
+    if (saved?.url === url) return saved.text;
+    if (element.id && document.querySelectorAll(`[id="${CSS.escape(element.id)}"]`).length === 1)
+      return originalTextById.get(`${url}#${element.id}`) || "";
+    return "";
   }
 
   function preserveSentenceBoundaries(element) {
     // Keep an actual English sentence attached to its DOM range before Chrome
     // translates it. No sentence-order or translation-similarity guess is used.
-    if (!("Segmenter" in Intl) || element.querySelector("[data-pb-sentence]")) return;
+    if (!("Segmenter" in Intl)) return;
     if (element.closest("nav, header, footer, [contenteditable=true]") ||
-        element.querySelector("script, style, pre, code, math, svg, input, textarea")) return;
+        element.querySelector("script, style, pre, code, svg, input, textarea")) return;
     const raw = element.textContent;
     if (!looksPrimarilyEnglish(raw) || raw.length > 20000) return;
+    const existing = [...element.querySelectorAll("[data-pb-sentence]")];
+    if (existing.length) {
+      if (existing.every(span => sentenceByKey.get(span.dataset.pbSentence)?.paragraph === element)) return;
+      // English was restored with stale markers from an earlier script. Rebuild
+      // from the actual English text instead of permanently skipping this block.
+      for (const span of existing.reverse()) span.replaceWith(...span.childNodes);
+    }
     const segments = Array.from(new Intl.Segmenter("en", { granularity: "sentence" }).segment(raw));
     if (segments.length < 2 || segments.length > 100) return;
     const texts = [];
@@ -402,8 +448,10 @@
     }
     // Work backwards so earlier text offsets remain valid after extraction.
     for (const segment of segments.reverse()) {
-      const start = segment.index;
-      const end = start + segment.segment.length;
+      // Whitespace belongs between sentences, not inside the last inline
+      // ancestor. Including it needlessly crosses publisher ID boundaries.
+      const start = segment.index + segment.segment.length - segment.segment.trimStart().length;
+      const end = segment.index + segment.segment.trimEnd().length;
       const first = texts.find(t => t.end > start);
       const last = texts.find(t => t.end >= end && t.start < end);
       if (!first || !last || !segment.segment.trim()) continue;
@@ -413,43 +461,133 @@
       // Do not split an inline element with an ID: cloning that boundary could
       // create duplicate publisher link targets. Fall back to paragraph cache.
       const splitsIdentifiedElement = (node) => {
-        for (let parent = node.parentElement; parent && parent !== element; parent = parent.parentElement)
+        // extractContents only clones partially selected ancestors below the
+        // range's common ancestor. An ID on that ancestor is retained intact.
+        const common = range.commonAncestorContainer;
+        if (common.nodeType === Node.TEXT_NODE) return false;
+        for (let parent = node.parentElement; parent && parent !== common && parent !== element; parent = parent.parentElement)
           if (parent.id) return true;
         return false;
       };
       if (splitsIdentifiedElement(first.node) || splitsIdentifiedElement(last.node)) continue;
+      if (sentenceByKey.size >= 20000) return;
       const span = document.createElement("span");
-      span.dataset.pbSentence = "";
+      span.dataset.pbSentence = String(++nextSentenceKey);
       span.appendChild(range.extractContents());
       range.insertNode(span);
-      originalTextBySentence.set(span, {
+      const saved = {
         url: location.href.split("#")[0],
         text: normalizedReadableText(segment.segment),
-      });
+        paragraph: element,
+      };
+      originalTextBySentence.set(span, saved);
+      sentenceByKey.set(span.dataset.pbSentence, saved);
     }
   }
 
-  function capturedSentenceSelection(element, selectionRange, originalParagraph) {
+  function sentenceRecord(span, element) {
+    let saved = originalTextBySentence.get(span);
+    if (!saved) {
+      const key = span.dataset.pbSentence;
+      const keyed = sentenceByKey.get(key);
+      if (keyed?.paragraph === element &&
+          element.querySelectorAll(`[data-pb-sentence="${CSS.escape(key)}"]`).length === 1) saved = keyed;
+    }
+    return saved?.paragraph === element && saved.url === location.href.split("#")[0] ? saved : null;
+  }
+
+  function sentenceRanges(element, spans) {
+    const ranges = [...spans].map(span => {
+      const range = document.createRange(); range.selectNodeContents(span); return range;
+    });
+    for (let i = 0; i + 1 < spans.length; i++) {
+      const current = spans[i], next = spans[i + 1];
+      if (current.contains(next) || current.querySelector("[data-pb-sentence]")) continue;
+      const tail = current.textContent.match(/[。！？][”’」』）)\]]*\s*([A-Za-z][A-Za-z‐‑‒–—-]{0,23})\s*$/u);
+      const continuation = next.textContent.match(/^\s*([-‐‑‒–—]\s*[A-Za-z][A-Za-z0-9‐‑‒–—-]*)/u);
+      const saved = sentenceRecord(next, element);
+      const currentSaved = sentenceRecord(current, element);
+      if (!tail || !continuation || !saved || !currentSaved || !/[.!?][)\]"']*$/.test(currentSaved.text)) continue;
+      const normalizeToken = value => value.toLowerCase().replace(/[‐‑‒–—]/g, "-").replace(/\s+/g, "");
+      const token = normalizeToken(tail[1] + continuation[1]);
+      // Only repair a split hyphenated term independently present in the next
+      // English sentence. Do not accept arbitrary extra words or Chinese clauses.
+      if (!normalizeToken(saved.text).includes(token)) continue;
+      const offset = tail.index + tail[0].lastIndexOf(tail[1]);
+      const walker = document.createTreeWalker(current, NodeFilter.SHOW_TEXT);
+      let consumed = 0;
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (consumed + node.length > offset) {
+          ranges[i].setEnd(node, offset - consumed);
+          ranges[i + 1].setStart(node, offset - consumed);
+          break;
+        }
+        consumed += node.length;
+      }
+    }
+    return ranges;
+  }
+
+  function capturedSentenceSelection(element, selectionRange, originalParagraph, diagnostic = {}) {
     const pieces = [];
-    for (const span of element.querySelectorAll("[data-pb-sentence]")) {
-      if (!selectionRange.intersectsNode(span)) continue;
+    const spans = element.querySelectorAll("[data-pb-sentence]");
+    diagnostic.sentenceAnchors = spans.length;
+    diagnostic.hasEnglishParagraph = Boolean(originalParagraph);
+    diagnostic.reason = spans.length ? "no-selected-sentence" : "no-sentence-anchors";
+    const logicalRanges = sentenceRanges(element, spans);
+    for (let index = 0; index < spans.length; index++) {
+      const span = spans[index];
       const range = selectionRange.cloneRange();
-      const bounds = document.createRange();
-      bounds.selectNodeContents(span);
+      const bounds = logicalRanges[index];
       if (range.compareBoundaryPoints(Range.START_TO_START, bounds) < 0)
         range.setStart(bounds.startContainer, bounds.startOffset);
       if (range.compareBoundaryPoints(Range.END_TO_END, bounds) > 0)
         range.setEnd(bounds.endContainer, bounds.endOffset);
       const selected = normalizedReadableText(range.toString());
       if (!compactChinese(selected)) continue;
-      const saved = originalTextBySentence.get(span);
-      if (!saved || saved.url !== location.href.split("#")[0] ||
-          !originalParagraph.includes(saved.text) ||
-          compactChinese(selected) !== compactChinese(span.textContent)) return null;
+      const saved = sentenceRecord(span, element);
+      if (!saved || saved.paragraph !== element || saved.url !== location.href.split("#")[0]) {
+        diagnostic.reason = "sentence-cache-missing"; return null;
+      }
+      if (!originalParagraph.includes(saved.text)) {
+        diagnostic.reason = "sentence-source-mismatch"; return null;
+      }
+      if ((bounds.toString().match(/[。！？]/g) || []).length > 1 && spans[index + 1] &&
+          !compactChinese(spans[index + 1].textContent) && sentenceRecord(spans[index + 1], element)) {
+        diagnostic.reason = "translation-collapsed-sentences"; return null;
+      }
+      if (compactChinese(selected) !== compactChinese(bounds.toString())) {
+        const before = bounds.cloneRange();
+        before.setEnd(range.startContainer, range.startOffset);
+        const after = bounds.cloneRange();
+        after.setStart(range.endContainer, range.endOffset);
+        diagnostic.boundary = {
+          marker: span.dataset.pbSentence,
+          selected: selected.slice(0, 1500),
+          markerChinese: normalizedReadableText(span.textContent).slice(0, 1500),
+          markerVisibleText: normalizedReadableText(span.innerText).slice(0, 1500),
+          logicalMarkerChinese: normalizedReadableText(bounds.toString()).slice(0, 1500),
+          markerEnglish: saved.text.slice(0, 1500),
+          omittedBefore: normalizedReadableText(before.toString()).slice(-500),
+          omittedAfter: normalizedReadableText(after.toString()).slice(0, 500),
+          nestedMarkers: span.querySelectorAll("[data-pb-sentence]").length,
+          childTags: [...span.children].map(child => ({
+            tag: child.tagName,
+            hidden: child.hidden || getComputedStyle(child).display === "none",
+          })).slice(0, 20),
+        };
+        diagnostic.reason = "partial-sentence-boundary"; return null;
+      }
       pieces.push({ selected, original: saved.text });
     }
-    if (!pieces.length || compactChinese(pieces.map(p => p.selected).join(" ")) !== compactChinese(selectionRange.toString())) return null;
+    diagnostic.selectedSentences = pieces.length;
+    if (!pieces.length) return null;
+    if (compactChinese(pieces.map(p => p.selected).join(" ")) !== compactChinese(selectionRange.toString())) {
+      diagnostic.reason = "uncovered-selection-text"; return null;
+    }
     const source = pieces.map(p => p.original).join(" ");
+    diagnostic.reason = originalParagraph.includes(source) ? "captured" : "noncontiguous-source";
     return originalParagraph.includes(source) ? source : null;
   }
 
@@ -482,6 +620,8 @@
       const uniqueId =
         id &&
         document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length === 1;
+      const sentenceDiagnostic = {};
+      const capturedSentenceSource = capturedSentenceSelection(element, clipped, capturedOriginal(element), sentenceDiagnostic);
       parts.push({
         exact: selected,
         paragraph: normalizedReadableText(element.textContent),
@@ -492,7 +632,8 @@
             : "") ||
           "",
         containerId: uniqueId ? id : "",
-        capturedSentenceSource: capturedSentenceSelection(element, clipped, capturedOriginal(element)),
+        capturedSentenceSource,
+        sentenceDiagnostic,
       });
     }
     const index = paragraph.indexOf(exact);
@@ -847,7 +988,14 @@
     const originalParagraph = await recoverOriginalParagraph(anchor);
     if (anchor.capturedSentenceSource && originalParagraph.includes(anchor.capturedSentenceSource))
       return mappedEnglishAnchor(anchor, originalParagraph, anchor.capturedSentenceSource, 1, "captured-sentence-range");
-    const fastMatch = fastPositionMapping(anchor, originalParagraph);
+    // A stale/copied sentence marker must not be bypassed by treating the
+    // changed paragraph as a whole-paragraph translation of its old snapshot.
+    const hasUnverifiedSentenceMarkers =
+      anchor.sentenceDiagnostic?.sentenceAnchors > 0 &&
+      anchor.sentenceDiagnostic.reason !== "captured";
+    const fastMatch = hasUnverifiedSentenceMarkers
+      ? null
+      : fastPositionMapping(anchor, originalParagraph);
     if (fastMatch) return fastMatch;
     const candidates = shortlistMappingCandidates(anchor, originalParagraph);
     const translator = await getTranslator();
@@ -1277,6 +1425,44 @@
   });
 
   button.addEventListener("click", () => void openPanel(state.anchor));
+  async function copyLocationDiagnostic(includeBoundary = false) {
+    const targetButton = includeBoundary ? boundaryDetailsButton : diagnosticsButton;
+    const request = ++diagnosticCopyRequest;
+    clearTimeout(diagnosticResetTimer);
+    targetButton.disabled = true;
+    const report = {
+      version: currentVersion,
+      doi: extractDoi(),
+      selectedCharacters: state.anchor?.exact?.length || 0,
+      language: state.anchor?.selectedLanguage,
+      blocks: state.anchor?.parts?.map(part => {
+        const { boundary, ...summary } = part.sentenceDiagnostic || {};
+        return {
+          selectedCharacters: part.exact.length,
+          paragraphCharacters: part.paragraph.length,
+          ...summary,
+          ...(includeBoundary && boundary ? { boundary } : {}),
+        };
+      }) || [],
+    };
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
+      if (request !== diagnosticCopyRequest) return;
+      targetButton.textContent = includeBoundary ? "已复制句子边界详情" : "已复制诊断（不含正文或配对码）";
+    } catch {
+      if (request !== diagnosticCopyRequest) return;
+      targetButton.textContent = "复制失败，请保持网页在前台后重试";
+    } finally {
+      if (request === diagnosticCopyRequest) {
+        diagnosticsButton.disabled = boundaryDetailsButton.disabled = false;
+        diagnosticResetTimer = setTimeout(() => {
+          if (request === diagnosticCopyRequest) resetDiagnosticButtons();
+        }, 1800);
+      }
+    }
+  }
+  diagnosticsButton.addEventListener("click", () => copyLocationDiagnostic());
+  boundaryDetailsButton.addEventListener("click", () => copyLocationDiagnostic(true));
   closeButton.addEventListener("click", () => {
     panel.dataset.open = "false";
   });
