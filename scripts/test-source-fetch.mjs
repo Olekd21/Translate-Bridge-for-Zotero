@@ -17,7 +17,7 @@ const recovery = source.slice(
 );
 const english =
   "Lymphatic vessels protect cardiac function during pressure overload.";
-const anchor = { containerIndex: 0 };
+const anchor = { containerId: "paper-paragraph" };
 
 function harness({
   status = 200,
@@ -25,6 +25,7 @@ function harness({
   body = "",
   empty = false,
   pending = false,
+  paragraphs = [{ id: "paper-paragraph", textContent: english }],
 } = {}) {
   let requests = 0;
   let clock = 1000;
@@ -43,6 +44,7 @@ function harness({
     Date: { now: () => clock },
     location: { href: "https://example.org/article" },
     textContainerSelector: "p",
+    isTextContainer: () => true,
     setTimeout(fn, ms) {
       assert.equal(ms, 10000);
       timeout = fn;
@@ -66,7 +68,7 @@ function harness({
           title,
           body: { textContent: body },
           querySelector: () => null,
-          querySelectorAll: () => (empty ? [] : [{ textContent: english }]),
+          querySelectorAll: () => (empty ? [] : paragraphs),
         };
       }
     },
@@ -82,6 +84,7 @@ function harness({
     abort: () => timeout(),
     aborted: () => signal.aborted,
     clears: () => clears,
+    navigate: (url) => { context.location.href = url; },
   };
 }
 
@@ -140,4 +143,39 @@ test("empty successful response is not cached as paper content", async () => {
   const h = harness({ empty: true });
   await assert.rejects(h.recover(anchor), /未返回可用的英文正文/);
   assert.equal(h.state.sourceParagraphsPromise, null);
+});
+
+test("source order changes do not affect stable-id recovery", async () => {
+  const h = harness({
+    paragraphs: [
+      {
+        id: "advert",
+        textContent: "An unrelated announcement should never be a PDF anchor.",
+      },
+      { id: "paper-paragraph", textContent: english },
+    ],
+  });
+  assert.equal(await h.recover({ ...anchor, containerIndex: 0 }), english);
+});
+test("index-only and duplicate-id recovery are refused", async () => {
+  const h = harness();
+  await assert.rejects(h.recover({ containerIndex: 0 }), /稳定段落标识/);
+  assert.equal(h.count(), 0);
+  const duplicate = harness({
+    paragraphs: [
+      { id: "paper-paragraph", textContent: english },
+      { id: "paper-paragraph", textContent: english },
+    ],
+  });
+  await assert.rejects(duplicate.recover(anchor), /重复/);
+});
+test("a different article cannot reuse the previous fetched source", async () => {
+  const h=harness();
+  await h.recover(anchor);
+  h.navigate("https://example.org/another-article");
+  await h.recover(anchor);
+  assert.equal(h.count(),2);
+  h.navigate("https://example.org/another-article#results");
+  await h.recover(anchor);
+  assert.equal(h.count(),2);
 });

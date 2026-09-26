@@ -37,6 +37,7 @@ with ZipFile(bundle) as z:
         xm = json.loads(xpi.read("manifest.json"))
         assert xm["version"] == addon["version"]
         assert xm["applications"]["zotero"]["id"] == addon["config"]["addonID"]
+        assert xm["applications"]["zotero"]["update_url"].startswith('https://github.com/Olekd21/Translate-Bridge-for-Zotero/'), 'Missing or obsolete update manifest URL; Zotero requires update_url'
         assert xpi.read("content/user-guide.html") == guide
         for f in ["guide.html", "guide.js", "guide.css", "icons/favicon.png", "icons/favicon@0.5x.png"]:
             assert xpi.read("content/" + f), f

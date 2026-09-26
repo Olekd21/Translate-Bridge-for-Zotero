@@ -1,5 +1,5 @@
 (() => {
-  const currentVersion = "1.0.0";
+  const currentVersion = "1.0.1";
   if (window.__paperBridgeVersion === currentVersion) return;
   document.getElementById("paper-bridge-root")?.remove();
   window.__paperBridgeVersion = currentVersion;
@@ -18,6 +18,7 @@
     openTarget: null,
     mappingRequestId: 0,
     sourceParagraphsPromise: null,
+    sourceParagraphsUrl: "",
     sourceFetchRetryAt: 0,
     sourceFetchError: "",
   };
@@ -32,8 +33,9 @@
     { value: "#aaaaaa", label: "灰色" },
   ];
   const originalTextByElement = new WeakMap();
+  const originalTextById = new Map();
   const textContainerSelector =
-    "p, li, blockquote, figcaption, td, th, h1, h2, h3, h4, h5, h6";
+    "p, li, blockquote, figcaption, td, th, h1, h2, h3, h4, h5, h6, div";
 
   const root = document.createElement("div");
   root.id = "paper-bridge-root";
@@ -144,15 +146,23 @@
   }
 
   function rememberEnglishContainers(scope = document) {
-    const candidates = scope.matches?.(textContainerSelector)
-      ? [scope]
-      : Array.from(scope.querySelectorAll?.(textContainerSelector) || []);
+    const candidates = [
+      ...(scope.matches?.(textContainerSelector) ? [scope] : []),
+      ...Array.from(scope.querySelectorAll?.(textContainerSelector) || []),
+    ];
     for (const element of candidates) {
-      if (root.contains(element) || originalTextByElement.has(element))
-        continue;
+      if (root.contains(element) || !isTextContainer(element)) continue;
       const text = normalizedReadableText(element.textContent);
       if (looksPrimarilyEnglish(text)) {
-        originalTextByElement.set(element, text);
+        originalTextByElement.set(element, {
+          url: location.href.split("#")[0],
+          text,
+        });
+        if (element.id && originalTextById.size < 5000)
+          originalTextById.set(
+            `${location.href.split("#")[0]}#${element.id}`,
+            text,
+          );
       }
     }
   }
@@ -160,12 +170,23 @@
   rememberEnglishContainers();
   new MutationObserver((records) => {
     for (const record of records) {
+      if (root.contains(record.target)) continue;
+      if (record.type === "characterData") {
+        rememberEnglishContainers(record.target.parentElement);
+        continue;
+      }
       for (const node of record.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE)
           rememberEnglishContainers(node);
+        else if (node.nodeType === Node.TEXT_NODE)
+          rememberEnglishContainers(node.parentElement);
       }
     }
-  }).observe(document.body, { childList: true, subtree: true });
+  }).observe(document.documentElement, {
+    childList: true,
+    characterData: true,
+    subtree: true,
+  });
 
   const button = root.querySelector(".pb-selection-button");
   const panel = root.querySelector(".pb-panel");
@@ -291,12 +312,22 @@
     buttonNode.textContent = expanded ? "收起" : collapsedLabel;
   }
 
+  function isTextContainer(element) {
+    if (!element?.matches?.(textContainerSelector)) return false;
+    const semantic =
+      "p, li, blockquote, figcaption, td, th, h1, h2, h3, h4, h5, h6";
+    if (element.tagName !== "DIV") return !element.querySelector(semantic);
+    if (element.parentElement?.closest(semantic)) return false;
+    // A flat div is a common publisher paragraph. Never treat an entire
+    // article/section containing other blocks as one paragraph.
+    return !element.querySelector(textContainerSelector);
+  }
+
   function nearestTextContainer(node) {
     let element =
       node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
     while (element && element !== document.body) {
-      if (/^(P|LI|BLOCKQUOTE|FIGCAPTION|TD|TH|H[1-6])$/.test(element.tagName))
-        return element;
+      if (isTextContainer(element)) return element;
       element = element.parentElement;
     }
     return node?.parentElement || document.body;
@@ -340,6 +371,11 @@
     );
   }
 
+  function capturedOriginal(element) {
+    const saved = originalTextByElement.get(element);
+    return saved?.url === location.href.split("#")[0] ? saved.text : "";
+  }
+
   function buildAnchor(selection) {
     if (!selection || selection.rangeCount === 0 || selection.isCollapsed)
       return null;
@@ -352,7 +388,35 @@
     const paragraph = normalizedReadableText(container.textContent);
     const pageContainers = Array.from(
       document.querySelectorAll(textContainerSelector),
-    ).filter((element) => !root.contains(element));
+    ).filter((element) => !root.contains(element) && isTextContainer(element));
+    const parts = [];
+    for (const element of pageContainers) {
+      if (!range.intersectsNode(element)) continue;
+      const clipped = range.cloneRange();
+      const block = document.createRange();
+      block.selectNodeContents(element);
+      if (clipped.compareBoundaryPoints(Range.START_TO_START, block) < 0)
+        clipped.setStart(block.startContainer, block.startOffset);
+      if (clipped.compareBoundaryPoints(Range.END_TO_END, block) > 0)
+        clipped.setEnd(block.endContainer, block.endOffset);
+      const selected = normalizedReadableText(clipped.toString());
+      if (!selected) continue;
+      const id = element.id || "";
+      const uniqueId =
+        id &&
+        document.querySelectorAll(`[id="${CSS.escape(id)}"]`).length === 1;
+      parts.push({
+        exact: selected,
+        paragraph: normalizedReadableText(element.textContent),
+        originalParagraph:
+          capturedOriginal(element) ||
+          (uniqueId
+            ? originalTextById.get(`${location.href.split("#")[0]}#${id}`)
+            : "") ||
+          "",
+        containerId: uniqueId ? id : "",
+      });
+    }
     const index = paragraph.indexOf(exact);
     const contextSize = 96;
     const prefix =
@@ -372,8 +436,10 @@
       prefix,
       suffix,
       paragraph,
-      originalParagraph: originalTextByElement.get(container) || "",
+      originalParagraph: capturedOriginal(container),
       containerIndex: pageContainers.indexOf(container),
+      containerId: parts.length === 1 ? parts[0].containerId : "",
+      parts,
       sectionHeading: findHeading(container),
       selectedLanguage: /[\u3400-\u9fff]/.test(exact) ? "zh" : "en",
     };
@@ -500,76 +566,18 @@
     const compactSelected = compactChinese(selectedText);
     if (!compactParagraph || !compactSelected) return null;
 
-    const coverage = compactParagraph.includes(compactSelected)
-      ? compactSelected.length / compactParagraph.length
-      : 0;
-    if (coverage >= 0.5) {
+    // Position and partial coverage alone cannot prove bilingual equivalence.
+    if (compactParagraph === compactSelected) {
       return mappedEnglishAnchor(
         anchor,
         originalParagraph,
         originalParagraph,
-        Math.min(0.99, 0.82 + coverage * 0.17),
-        "translated-paragraph-coverage",
+        1,
+        "captured-whole-paragraph",
       );
     }
-
-    const selectionStart = translatedParagraph.indexOf(selectedText);
-    if (selectionStart < 0) return null;
-    const selectionEnd = selectionStart + selectedText.length;
-    const translatedSpans = sentenceSpans(translatedParagraph, "zh-CN");
-    const sourceSpans = sentenceSpans(originalParagraph, "en");
-    if (!translatedSpans.length || !sourceSpans.length) return null;
-
-    const firstTranslated = translatedSpans.findIndex(
-      (span) => span.end > selectionStart,
-    );
-    let lastTranslated = -1;
-    for (let index = translatedSpans.length - 1; index >= 0; index -= 1) {
-      if (translatedSpans[index].start < selectionEnd) {
-        lastTranslated = index;
-        break;
-      }
-    }
-    if (firstTranslated < 0 || lastTranslated < firstTranslated) return null;
-
-    const countRatio = sourceSpans.length / translatedSpans.length;
-    const firstSource = Math.max(
-      0,
-      Math.min(
-        sourceSpans.length - 1,
-        Math.floor(firstTranslated * countRatio),
-      ),
-    );
-    const lastSource = Math.max(
-      firstSource,
-      Math.min(
-        sourceSpans.length - 1,
-        Math.ceil((lastTranslated + 1) * countRatio) - 1,
-      ),
-    );
-    const countDifference = Math.abs(
-      sourceSpans.length - translatedSpans.length,
-    );
-    if (countDifference > Math.max(2, translatedSpans.length * 0.25))
-      return null;
-
-    const source = originalParagraph
-      .slice(sourceSpans[firstSource].start, sourceSpans[lastSource].end)
-      .trim();
-    if (!looksPrimarilyEnglish(source)) return null;
-    const score = Math.max(
-      0.7,
-      0.94 - countDifference / Math.max(8, translatedSpans.length),
-    );
-    return mappedEnglishAnchor(
-      anchor,
-      originalParagraph,
-      source,
-      score,
-      "translated-sentence-position",
-    );
+    return null;
   }
-
   function withTimeout(promise, milliseconds, message) {
     let timer;
     const timeout = new Promise((_, reject) => {
@@ -612,9 +620,15 @@
       }
       const paragraphs = Array.from(
         sourceDocument.querySelectorAll(textContainerSelector),
-        (element) => normalizedReadableText(element.textContent),
-      );
-      if (!paragraphs.some(looksPrimarilyEnglish)) {
+      )
+        .filter(isTextContainer)
+        .map((element) => ({
+          id: element.id || "",
+          text: normalizedReadableText(element.textContent),
+        }));
+      if (
+        !paragraphs.some((paragraph) => looksPrimarilyEnglish(paragraph.text))
+      ) {
         throw new Error(
           "网站未返回可用的英文正文，请先确认论文网页可以正常阅读。",
         );
@@ -638,8 +652,17 @@
     if (looksPrimarilyEnglish(anchor.originalParagraph)) {
       return anchor.originalParagraph;
     }
-    if (!Number.isInteger(anchor.containerIndex) || anchor.containerIndex < 0) {
-      throw new Error("无法确定这段中文在原网页中的位置。");
+    if (!anchor.containerId) {
+      throw new Error(
+        "未保存这段对应的英文，且网页没有稳定段落标识。请先恢复英文并刷新网页，再启用整页翻译；无需重新配对 Zotero。",
+      );
+    }
+    const url = location.href.split("#")[0];
+    if (state.sourceParagraphsUrl !== url) {
+      state.sourceParagraphsUrl = url;
+      state.sourceParagraphsPromise = null;
+      state.sourceFetchRetryAt = 0;
+      state.sourceFetchError = "";
     }
     if (!state.sourceParagraphsPromise) {
       if (Date.now() < state.sourceFetchRetryAt) {
@@ -651,11 +674,15 @@
       });
     }
     const sourceParagraphs = await state.sourceParagraphsPromise;
-    const original = sourceParagraphs[anchor.containerIndex] || "";
-    if (!looksPrimarilyEnglish(original)) {
-      throw new Error("重新读取网页后仍未找到对应的英文段落。");
+    const matches = sourceParagraphs.filter(
+      (paragraph) => paragraph.id === anchor.containerId,
+    );
+    if (matches.length !== 1 || !looksPrimarilyEnglish(matches[0].text)) {
+      throw new Error(
+        "原网页段落标识缺失或重复，未猜测英文位置。请恢复英文并刷新网页后重新翻译。",
+      );
     }
-    return original;
+    return matches[0].text;
   }
 
   function translatedMappingCandidates(paragraph) {
@@ -708,28 +735,64 @@
   }
 
   async function mapTranslatedSelection(anchor) {
+    if (anchor.parts?.length) {
+      if (anchor.parts.length > 8)
+        throw new Error("选区超过 8 个文字块，请分段选择。");
+      if (
+        compactChinese(anchor.parts.map((part) => part.exact).join(" ")) !==
+        compactChinese(anchor.exact)
+      )
+        throw new Error("选区包含未识别的文字块，请分别选择正文段落。");
+      const mapped = [];
+      for (const part of anchor.parts)
+        mapped.push(
+          await mapTranslatedSelection({ ...part, selectedLanguage: "zh" }),
+        );
+      return {
+        ...anchor,
+        exact: mapped.map((part) => part.exact).join(" "),
+        originalParagraph: mapped
+          .map((part) => part.originalParagraph)
+          .join(" "),
+        paragraph: mapped.map((part) => part.originalParagraph).join(" "),
+        prefix: mapped[0].prefix,
+        suffix: mapped[mapped.length - 1].suffix,
+        translatedSelection: anchor.exact,
+        translatedParagraph: anchor.paragraph,
+        selectedLanguage: "en",
+        selectionMode: "translated",
+        parts: undefined,
+        mappingMethod: "verified-blocks",
+        mappingScore: Math.min(...mapped.map((part) => part.mappingScore)),
+      };
+    }
     const originalParagraph = await recoverOriginalParagraph(anchor);
     const fastMatch = fastPositionMapping(anchor, originalParagraph);
     if (fastMatch) return fastMatch;
     const candidates = shortlistMappingCandidates(anchor, originalParagraph);
     const translator = await getTranslator();
     const selected = compactChinese(anchor.exact);
-    let best = null;
+    const ranked = [];
     const deadline = Date.now() + 12000;
     for (const candidate of candidates) {
       const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
+      if (remaining <= 0)
+        throw new Error("英文回查尚未完成候选核验，请缩短选区后重试。");
       const translated = await withTimeout(
         translator.translate(candidate),
         Math.min(4000, remaining),
         "英文反查超时，请重新选择完整句子或段落。",
       );
       const score = bigramSimilarity(selected, compactChinese(translated));
-      if (!best || score > best.score)
-        best = { source: candidate, translated, score };
-      if (score >= 0.96) break;
+      ranked.push({ source: candidate, translated, score });
     }
-    if (!best || best.score < 0.42) {
+    ranked.sort((a, b) => b.score - a.score);
+    const best = ranked[0];
+    if (
+      !best ||
+      best.score < 0.78 ||
+      (ranked[1] && best.score - ranked[1].score < 0.1)
+    ) {
       throw new Error(
         "没有可靠地反查到对应英文；请尽量选择一个完整句子或连续段落。",
       );
@@ -796,7 +859,8 @@
     noteWrap.hidden = !hasAnchor;
     colorWrap.hidden = !hasAnchor;
     actions.hidden = !hasAnchor;
-    syncButton.disabled = state.syncing || !hasAnchor || !isPdfAnchorReady(state.anchor);
+    syncButton.disabled =
+      state.syncing || !hasAnchor || !isPdfAnchorReady(state.anchor);
     openSelectionButton.disabled =
       state.locating || !hasAnchor || !isPdfAnchorReady(state.anchor);
     openSelectionButton.title = openSelectionButton.disabled
@@ -950,7 +1014,11 @@
     const started = Date.now();
     syncButton.disabled = true;
     const slowTimer = setTimeout(() => {
-      if (state.anchor === requestAnchor) setStatus("仍在等待 Zotero 读取 PDF；请勿重复同步。超过时限会显示原因。", "warn");
+      if (state.anchor === requestAnchor)
+        setStatus(
+          "仍在等待 Zotero 读取 PDF；请勿重复同步。超过时限会显示原因。",
+          "warn",
+        );
     }, 8000);
     setStatus("正在读取并定位 PDF 全文；首次同步可能需要几秒……");
     const annotation = {
@@ -1043,7 +1111,11 @@
     const requestAnchor = state.anchor;
     const started = Date.now();
     const slowTimer = setTimeout(() => {
-      if (state.anchor === requestAnchor) setStatus("仍在等待 PDF 读取或阅读器打开；超过时限会显示具体原因。", "warn");
+      if (state.anchor === requestAnchor)
+        setStatus(
+          "仍在等待 PDF 读取或阅读器打开；超过时限会显示具体原因。",
+          "warn",
+        );
     }, 8000);
     openSelectionButton.disabled = true;
     setStatus("正在 PDF 全文中定位当前段落；首次读取可能需要几秒……");
@@ -1063,7 +1135,7 @@
         : "对应位置";
       setStatus(
         response?.ok
-          ? `已在 Zotero 中打开${page}（${((Date.now() - started) / 1000).toFixed(1)} 秒${response.diagnostics?.cacheHit ? '，已复用缓存' : ''}）`
+          ? `已在 Zotero 中打开${page}（${((Date.now() - started) / 1000).toFixed(1)} 秒${response.diagnostics?.cacheHit ? "，已复用缓存" : ""}）`
           : response?.error || "未能定位当前段落",
         response?.ok ? "good" : "warn",
       );

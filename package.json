@@ -1,6 +1,6 @@
 {
   "name": "paper-bridge",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -11,7 +11,7 @@
     "test:bridge-runtime": "node --test scripts/test-bridge-runtime.mjs",
     "test:full-pdf": "node --test scripts/test-full-pdf.mjs",
     "test:reading-ui": "node --test scripts/test-reading-ui.mjs",
-    "test:source-fetch": "node --test scripts/test-source-fetch.mjs",
+    "test:source-fetch": "node --test scripts/test-source-fetch.mjs scripts/test-translated-rematch.mjs",
     "test:geometry": "node scripts/test-pdf-geometry.mjs && node --test scripts/test-geometry-edge-cases.mjs",
     "match:sample": "npm run match:sample --workspace @paper-bridge/matcher",
     "build:zotero": "npm run build --prefix packages/zotero-addon",

@@ -1,7 +1,7 @@
 {
   "name": "paper-bridge-zotero",
   "type": "module",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Connect Chrome Google Translate reading with local Zotero PDF highlights, translations and notes.",
   "config": {
     "addonName": "Translate Bridge for Zotero",
@@ -12,13 +12,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jinwenpang0523-alt/Translate-Bridge-for-Zotero.git"
+    "url": "git+https://github.com/Olekd21/Translate-Bridge-for-Zotero.git"
   },
   "author": "Translate Bridge for Zotero contributors",
   "bugs": {
-    "url": "https://github.com/jinwenpang0523-alt/Translate-Bridge-for-Zotero/issues"
+    "url": "https://github.com/Olekd21/Translate-Bridge-for-Zotero/issues"
   },
-  "homepage": "https://github.com/jinwenpang0523-alt/Translate-Bridge-for-Zotero#readme",
+  "homepage": "https://github.com/Olekd21/Translate-Bridge-for-Zotero#readme",
   "license": "AGPL-3.0-or-later",
   "scripts": {
     "prebuild": "node ../../scripts/prepare-addon-guide.mjs",
