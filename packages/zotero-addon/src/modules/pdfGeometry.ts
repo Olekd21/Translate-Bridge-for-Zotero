@@ -30,6 +30,7 @@ export type GeometryMatch = {
   pageLabel?: string;
   rects?: Rect[];
   nextPageRects?: Rect[];
+  additionalPages?: { pageIndex: number; rects: Rect[]; text: string; offset: number; top: number }[];
   text?: string;
   score?: number;
   method?:
@@ -89,7 +90,8 @@ function round(value: number) {
 function textTokens(value: string): string[] {
   return Array.from(
     normalizeText(value)
-      .replace(/[−–]/g, "-")
+      .replace(/\u00ad/g, "")
+      .replace(/[‐‑−–]/g, "-")
       .replace(/([+-])\s+(?=\d)/g, "$1")
       .matchAll(
         /[\p{L}][\p{L}\p{N}]*|[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?|[<>=≤≥≠±]/gu,
@@ -152,11 +154,59 @@ function pageTokens(words: PageWord[]): PageToken[] {
 }
 
 const numericCitation = /\[\s*\d+(?:\s*[,–−-]\s*\d+)*\s*\]/g;
-function compactCharacters(value: string) {
+// Explicit orthographic equivalents only: never stem arbitrary gene names or
+// drop scientific numbers. Preserve character ownership for PDF rectangles.
+function canonicalScientificText(raw: string, owners?: PageWord[]) {
+  const spellings: Record<string, string> = {
+    generalised: "generalized", normalised: "normalized", unnormalised: "unnormalized",
+    characterised: "characterized", specialised: "specialized", analysed: "analyzed", signalling: "signaling",
+    remodelling: "remodeling", ischaemic: "ischemic", ischaemia: "ischemia",
+    oedema: "edema", hyperglycaemia: "hyperglycemia", hyperlipidaemia: "hyperlipidemia",
+    hypercholesterolaemia: "hypercholesterolemia", ageing: "aging",
+  };
+  const replacements: {start:number;end:number;text:string}[] = [];
+  for (const match of raw.matchAll(/\b[a-z]+\b/g)) {
+    if (spellings[match[0]]) replacements.push({start:match.index!,end:match.index!+match[0].length,text:spellings[match[0]]});
+  }
+  // Sentence-final reference runs: preserve their complete numeric set, merely
+  // expand bounded ranges (54–56 => 54,55,56); never strip bare numbers.
+  for (const match of raw.matchAll(/(?<=[a-z)])\s*(\d{1,3}(?:\s*[,–-]\s*\d{1,3})+)(?=[.;:])/g)) {
+    const value = match[1];
+    // A comma-only run already has the same compact text. Rewriting its spaces
+    // would shift digit ownership onto punctuation in the PDF geometry index.
+    if (!/[–-]/.test(value)) continue;
+    const parts = value.split(','); const expanded: string[] = []; let valid = true;
+    for (const part of parts) {
+      const range = part.trim().match(/^(\d+)[–-](\d+)$/);
+      if (range) {
+        const from = Number(range[1]), to = Number(range[2]);
+        if (to < from || to - from > 20) {valid=false;break;}
+        for (let n=from;n<=to;n++) expanded.push(String(n));
+      } else if (/^\s*\d+\s*$/.test(part)) expanded.push(part.trim());
+      else {valid=false;break;}
+    }
+    if (valid) replacements.push({start:match.index!,end:match.index!+match[0].length,text:expanded.join(',')});
+  }
+  replacements.sort((a,b)=>a.start-b.start);
+  let cursor=0, text=""; const mapped: PageWord[]=[];
+  for (const replacement of replacements) {
+    text += raw.slice(cursor,replacement.start) + replacement.text;
+    if (owners) {
+      mapped.push(...owners.slice(cursor,replacement.start));
+      for(let i=0;i<replacement.text.length;i++) mapped.push(owners[Math.min(replacement.start+i,replacement.end-1)]);
+    }
+    cursor=replacement.end;
+  }
+  text += raw.slice(cursor); if (owners) mapped.push(...owners.slice(cursor));
+  return {text,owners:mapped};
+}
+function compactCharacters(value: string, useSpellings = true) {
   // Ignore explicit bracketed references, NOT scientific numbers/gene IDs.
-  const raw = normalizeText(value)
+  const normalized = normalizeText(value)
+    .replace(/\u00ad/g, "")
     .replace(numericCitation, "")
-    .replace(/[−–]/g, "-");
+    .replace(/[‐‑−–]/g, "-");
+  const raw = useSpellings ? canonicalScientificText(normalized).text : normalized;
   let result = "";
   for (let i = 0; i < raw.length; ) {
     const char = String.fromCodePoint(raw.codePointAt(i)!);
@@ -178,18 +228,22 @@ function keepCompactCharacter(raw: string, index: number, char: string) {
   );
 }
 
-function compactIndex(words: PageWord[]) {
-  const cached = compactCache.get(words);
+const literalCompactCache = new WeakMap<PageWord[], { text: string; owners: PageWord[] }>();
+function compactIndex(words: PageWord[], useSpellings = true) {
+  const indexCache = useSpellings ? compactCache : literalCompactCache;
+  const cached = indexCache.get(words);
   if (cached) return cached;
   let raw = "";
-  const rawOwners: PageWord[] = [];
+  let rawOwners: PageWord[] = [];
   for (const word of words) {
-    const text =
-      normalizeText(word.text).replace(/[−–]/g, "-") +
+    const normalized = normalizeText(word.text).replace(/\u00ad/g, "").replace(/[‐‑−–]/g, "-");
+    const text = (useSpellings ? canonicalScientificText(normalized).text : normalized) +
       (word.spaceAfter ? " " : "");
     raw += text;
     for (let i = 0; i < text.length; i++) rawOwners.push(word);
   }
+  const canonical = useSpellings ? canonicalScientificText(raw, rawOwners) : {text: raw, owners: rawOwners};
+  raw = canonical.text; rawOwners = canonical.owners;
   const citationSpans = [...raw.matchAll(numericCitation)];
   let text = "";
   const owners: PageWord[] = [];
@@ -209,7 +263,7 @@ function compactIndex(words: PageWord[]) {
     i += char.length;
   }
   const result = { text, owners };
-  compactCache.set(words, result);
+  indexCache.set(words, result);
   return result;
 }
 
@@ -258,17 +312,18 @@ function wordsInColumnOrder(words: PageWord[], pageWidth: number) {
   return result;
 }
 
-function compactCharacterCandidates(
+function compactCharacterCandidatesForMode(
   words: PageWord[],
   pageIndex: number,
   pageHeight: number,
   queryText: string,
   method: "compact-character-sequence" | "column-compact-character-sequence",
+  useSpellings: boolean,
 ): Candidate[] {
-  const query = compactCharacters(queryText);
+  const query = compactCharacters(queryText, useSpellings);
   if (query.length < 24) return [];
 
-  const { text: page, owners } = compactIndex(words);
+  const { text: page, owners } = compactIndex(words, useSpellings);
 
   const candidates: Candidate[] = [];
   let cursor = 0;
@@ -296,6 +351,20 @@ function compactCharacterCandidates(
     cursor = index + Math.max(1, query.length);
   }
   return candidates;
+}
+
+// Keep the literal path independent of spelling aliases: a recognizer can join
+// adjacent words or split an alias across lines. Applying aliases to only one
+// side must never destroy an otherwise exact textual match. Collect both paths
+// so repeated locations still reach the ambiguity check.
+function compactCharacterCandidates(
+  words: PageWord[], pageIndex: number, pageHeight: number, queryText: string,
+  method: "compact-character-sequence" | "column-compact-character-sequence",
+): Candidate[] {
+  return [
+    ...compactCharacterCandidatesForMode(words, pageIndex, pageHeight, queryText, method, false),
+    ...compactCharacterCandidatesForMode(words, pageIndex, pageHeight, queryText, method, true),
+  ];
 }
 
 function sequenceStarts(tokens: PageToken[], sequence: string[]): number[] {
@@ -377,9 +446,33 @@ function candidatesForPage(
     return [...columnCompact, ...compact];
   }
 
-  // Matching only the ends or skipping arbitrary middle words can turn a
-  // negated/different claim into a writable highlight. Require the full text.
-  return [];
+  // A bounded word-level fallback: the definite article may differ, but every content
+  // token (including negation, numbers and gene IDs) must remain in order.
+  // Avoid broad similarity scores that hide a changed scientific claim.
+  const articles = new Set(["the"]);
+  const contentQuery = query.filter((value) => !articles.has(value));
+  if (contentQuery.length < 8) return [];
+  const tolerant: Candidate[] = [];
+  for (const ordered of [words, wordsInColumnOrder(words, pageWidth)]) {
+    const indexed = pageTokens(ordered);
+    const content = indexed.map((token, index) => ({ token, index }))
+      .filter(({ token }) => !articles.has(token.value));
+    for (let start = 0; start <= content.length - contentQuery.length; start++) {
+      if (!contentQuery.every((value, offset) => content[start + offset].token.value === value)) continue;
+      const first = content[start].index;
+      const last = content[start + contentQuery.length - 1].index;
+      const extra = Math.abs((last - first + 1) - query.length);
+      if (extra > 2) continue;
+      const firstWord = indexed[first].word;
+      const lastWord = indexed[last].word;
+      const left = ordered.indexOf(firstWord);
+      const right = ordered.indexOf(lastWord);
+      tolerant.push({ pageIndex, startToken: first, endToken: last,
+        score: 0.94, method: "ordered-token-window",
+        words: ordered.slice(left, right + 1), pageHeight: height });
+    }
+  }
+  return tolerant;
 }
 
 function rectsForCandidate(candidate: Candidate): Rect[] {
@@ -429,6 +522,25 @@ function reconstructedText(words: PageWord[]) {
     .trim();
 }
 
+function isSkippableFigurePage(rawPage: unknown) {
+  const {height, words} = pageWords(rawPage);
+  const width = Number((rawPage as any)?.[0]) || 0;
+  if (!height || !width) return false;
+  const central = words.filter(word => word.rect[1] > height * 0.12 && word.rect[3] < height * 0.88 &&
+    word.rect[0] > width * 0.06 && word.rect[2] < width * 0.94);
+  if (!central.length) return true;
+  const rows = new Map<number,string[]>();
+  for (const word of central) rows.set(word.lineIndex,[...(rows.get(word.lineIndex) || []),word.text]);
+  const lines = [...rows.values()].map(parts => parts.join(" "));
+  const lengths = lines.map(line => (line.match(/[\p{L}]+/gu) || []).length);
+  // Figure panels often contain many short labels. Never skip a prose line,
+  // complete textual sentence, dense table, or a page with unknown geometry.
+  return lines.length >= 8 && lengths.every(length => length <= 6) &&
+    lengths.reduce((sum,length)=>sum+length,0) <= 160 &&
+    lengths.filter(length => length <= 3).length / lengths.length >= 0.8 &&
+    !lines.some((line,index)=>lengths[index] >= 3 && /[.!?。！？]\s*$/.test(line));
+}
+
 function crossPageMatch(data: RecognizerData, query: string[]): GeometryMatch {
   // Require substantial exact text on BOTH adjacent pages. Do not use the
   // permissive token-window fallback here: it could join unrelated passages.
@@ -448,6 +560,17 @@ function crossPageMatch(data: RecognizerData, query: string[]): GeometryMatch {
     );
   };
   for (let pageIndex = 0; pageIndex + 1 < pages.length; pageIndex++) {
+    // Most pages cannot contain the beginning. Avoid rebuilding every possible
+    // long query split for those pages.
+    if (!findPart(pages[pageIndex], pageIndex, query.slice(0, 8).join(" ")).length) continue;
+    let following = pageIndex + 1;
+    // Skip at most two blank/margin-only or sparse-label figure pages.
+    // The full query still has to match exactly across the retained pages.
+    while (following + 1 < pages.length && following - pageIndex <= 2) {
+      if (findPart(pages[following], following, query.slice(-8).join(" ")).length) break;
+      if (!isSkippableFigurePage(pages[following])) break;
+      following++;
+    }
     for (let split = 8; split <= query.length - 8; split++) {
       const first = findPart(
         pages[pageIndex],
@@ -456,22 +579,26 @@ function crossPageMatch(data: RecognizerData, query: string[]): GeometryMatch {
       );
       if (!first.length) continue;
       const second = findPart(
-        pages[pageIndex + 1],
-        pageIndex + 1,
+        pages[following],
+        following,
         query.slice(split).join(" "),
       );
       for (const left of first) {
         for (const right of second) {
           const rects = rectsForCandidate(left);
           const nextPageRects = rectsForCandidate(right);
-          const key = JSON.stringify({ pageIndex, rects, nextPageRects });
+          const key = JSON.stringify({ pageIndex, following, rects, nextPageRects });
           matches.set(key, {
             status: "unique",
             occurrences: 1,
             pageIndex,
             pageLabel: String(pageIndex + 1),
             rects,
-            nextPageRects,
+            ...(following === pageIndex + 1 ? { nextPageRects } : {
+              additionalPages: [{ pageIndex: following, rects: nextPageRects,
+                text: reconstructedText(right.words), offset: right.words[0]?.charOffset || 0,
+                top: right.words[0]?.rect[1] || 0 }],
+            }),
             text: `${reconstructedText(left.words)} ${reconstructedText(right.words)}`,
             score: 0.94,
             method: "cross-page-compact-character-sequence",
@@ -499,9 +626,12 @@ export function locateQuoteGeometry(
   const suffix = textTokens(selector.suffix || "");
   if (!query.length) return { status: "not-found", occurrences: 0 };
 
-  const rawCandidates = (data.pages || []).flatMap((page, pageIndex) =>
+  let rawCandidates = (data.pages || []).flatMap((page, pageIndex) =>
     candidatesForPage(page, pageIndex, query, prefix, suffix, selector.exact),
   );
+  if (rawCandidates.some((candidate) => candidate.score >= 0.97)) {
+    rawCandidates = rawCandidates.filter((candidate) => candidate.score >= 0.97);
+  }
   rawCandidates.sort(
     (left, right) =>
       right.score - left.score ||

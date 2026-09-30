@@ -7,6 +7,33 @@ const word=(text,x=40,y=100)=>[x,y,x+text.length*3,y+10,10,1,0,0,0,0,0,0,0,text]
 const page=rows=>[600,800,[[[[0,0,0,0,rows.map((r,i)=>[[word(r,40,80+i*20)]])]]]]];
 const selector=exact=>({type:'TextQuoteSelector',exact});
 
+test('cross-page paragraph skips sparse figure labels, never intervening prose',()=>{
+ const left='Lymphatic capillaries in all organs are composed of a monolayer of oak leaf shaped endothelial cells';
+ const right='These cells form a continuous network supporting fluid balance and immune surveillance throughout the heart';
+ const labels=['LYVE1','Podocalyxin','FITC dextran','LEC','Macrophage','Capillary','Cadherin 5','Claudin','Flap','Open valve','Closed valve','Lymphangion'];
+ const middle=page(labels);
+ const result=locate({pages:[page([left]),middle,page([right])]},selector(left+' '+right));
+ assert.equal(result.status,'unique');assert.equal(result.pageIndex,0);assert.equal(result.additionalPages[0].pageIndex,2);assert.equal(result.nextPageRects,undefined);
+ assert.equal(locate({pages:[page([left]),page([...labels,'This intervening page contains substantive results that must not be skipped.']),page([right])]},selector(left+' '+right)).status,'not-found');
+ assert.equal(locate({pages:[page([left]),middle,page([right.replace('supporting','not supporting')])]},selector(left+' '+right)).status,'not-found');
+});
+
+test('bounded medical spelling and reference range equivalents retain numeric content',()=>{
+ const q='Generalised lymphatic dysfunction was characterised by oedema and reduced contractile activity54,55,56.';
+ const data={pages:[page(['Generalized lymphatic dysfunction was characterized by edema and reduced contractile activity54–56.'])]};
+ assert.equal(locate(data,selector(q)).status,'unique');
+ assert.equal(locate(data,selector(q.replace('54,55,56','54,56'))).status,'not-found');
+ assert.equal(locate(data,selector(q.replace('reduced','not reduced'))).status,'not-found');
+});
+
+test('medical spelling compatibility does not relax gene names or experimental values',()=>{
+ const q='Generalised oedema involved CCL21 positive cells at 12 weeks after treatment.';
+ const data={pages:[page(['Generalized edema involved CCL21 positive cells at 12 weeks after treatment.'])]};
+ assert.equal(locate(data,selector(q)).status,'unique');
+ assert.equal(locate(data,selector(q.replace('CCL21','CCL22'))).status,'not-found');
+ assert.equal(locate(data,selector(q.replace('12 weeks','13 weeks'))).status,'not-found');
+});
+
 test('short sentence survives line-end hyphenation and ligatures',()=>{
  const q='Selective stimulation of lymphangiogenesis improves cardiac function';
  const r=locate({pages:[page(['Selective stimulation of lymphangio-','genesis improves cardiac function'])]},selector(q));
@@ -71,4 +98,70 @@ test('a shared PDF text line cannot paint across the empty inter-column gutter',
  const r=locate(data,selector('Left selected text right selected text'));
  assert.equal(r.status,'unique');assert.equal(r.rects.length,2);
  assert.ok(r.rects.every(rect=>rect[2]-rect[0]<200));
+});
+
+test('AHA heart-failure sentence matches PDF discretionary hyphens without losing scientific numbers',()=>{
+ const q='After unloading, qRT-PCR analysis of heart failure markers, including natriuretic peptide precursor A (Nppa), natriuretic peptide precursor B (Nppb) was normalized at 8 weeks, whereas myosin heavy chain 7(Myh7), a hypertrophy marker, Platelet endothelial cell adhesion molecule-1 remained unnormalized until 12 weeks (Figure S4A through S4C).';
+ const rows=['After unloading, qRT-\u00adPCR analysis of','heart failure markers, including natriuretic peptide pre-','cursor A (Nppa), natriuretic peptide precursor B (Nppb)','was normalized at 8\u2009weeks, whereas myosin heavy','chain 7(Myh7), a hypertrophy marker, Platelet endothe-','lial cell adhesion molecule-\u00ad1 remained unnormalized','until 12\u2009weeks (Figure S4A through S4C).'];
+ const r=locate({pages:[page(rows)]},selector(q));
+ assert.equal(r.status,'unique');
+ assert.equal(r.rects.length,7);
+ for(const changed of [q.replace('12 weeks','10 weeks'),q.replace('Myh7','Myh6'),q.replace('molecule-1','molecule-2')]) {
+  assert.equal(locate({pages:[page(rows)]},selector(changed)).status,'not-found');
+ }
+});
+
+test('soft hyphens do not erase actual negative signs',()=>{
+ const q='The estimated treatment effect was -15 units after adjustment for baseline covariates in the final study population';
+ assert.equal(locate({pages:[page([q.replace('-15','-\u00ad15')])]},selector(q)).status,'unique');
+ assert.equal(locate({pages:[page([q.replace('-15','15')])]},selector(q)).status,'not-found');
+});
+
+test('Unicode lexical hyphens match ASCII PDF hyphens while preserving numeric signs',()=>{
+ const ascii='After unloading, qRT-PCR analysis of heart failure markers, including natriuretic peptide precursor A (Nppa), natriuretic peptide precursor B (Nppb) was normalized at 8 weeks, whereas myosin heavy chain 7(Myh7), a hypertrophy marker, Platelet endothelial cell adhesion molecule-1 remained unnormalized until 12 weeks (Figure S4A through S4C).';
+ for(const dash of ['\u2010','\u2011']) {
+  const unicode=ascii.replaceAll('-',dash);
+  for(const [pdf,quote] of [[ascii,unicode],[unicode,ascii]]) {
+   assert.equal(locate({pages:[page([pdf])]},selector(quote)).status,'unique');
+   assert.equal(locate({pages:[page([pdf])]},selector(quote.replace('12 weeks','10 weeks'))).status,'not-found');
+   assert.equal(locate({pages:[page([pdf])]},selector(quote.replace('Myh7','Myh6'))).status,'not-found');
+  }
+ }
+});
+
+test('bounded word fallback tolerates article differences but not claims or identifiers',()=>{
+ const q='Treatment improved the cardiac function in mice during recovery after pressure overload';
+ const pdf=q.replace('the cardiac','cardiac');
+ assert.equal(locate({pages:[page([pdf])]},selector(q)).status,'unique');
+ assert.equal(locate({pages:[page([pdf]),page([pdf])]},selector(q)).status,'ambiguous');
+ for(const changed of [pdf.replace('improved','worsened'),pdf.replace('improved','did not improve')]) {
+  assert.equal(locate({pages:[page([changed])]},selector(q)).status,'not-found');
+ }
+ const gene='The precursor A regulates cardiac function in mice during recovery after pressure overload';
+ assert.equal(locate({pages:[page([gene.replace('precursor A','precursor')])]},selector(gene)).status,'not-found');
+});
+
+test('literal compact matching survives spelling aliases split across PDF words',()=>{
+ const variants=[
+  ['Cardiac remodelling protects cells during chronic inflammation in the heart.', ['Cardiac remo-', 'delling protects cells during chronic inflammation in the heart.']],
+  ['Cardiac signalling protects cells during chronic inflammation in the heart.', ['Cardiac sig-', 'nalling protects cells during chronic inflammation in the heart.']],
+  ['Cardiac ageing alters cellular responses during chronic inflammation in the heart.', ['Cardiacageing alters cellular responses during chronic inflammation in the heart.']],
+  ['Cardiac oedema alters cellular responses during chronic inflammation in the heart.', ['Cardiacoedema alters cellular responses during chronic inflammation in the heart.']],
+ ];
+ for(const [text,rows] of variants){
+  const data={pages:[page(rows)]};
+  assert.equal(locate(data,selector(text)).status,'unique');
+  assert.equal(locate(data,selector(text.replace('chronic inflammation','no inflammation'))).status,'not-found');
+ }
+});
+
+test('comma-only reference normalization retains digit rectangles and one physical match',()=>{
+ const texts=['Cardiac','ageing','was','observed','after','treatment', '54', ',', '55', ',', '56', '.'];
+ const words=texts.map((t,i)=>word(t,40+i*24,100));
+ // The recognizer stores reference digits separately from punctuation.
+ const data={pages:[[600,800,[[[[0,0,0,0,[[words]]]]]]]]};
+ const result=locate(data,selector('Cardiac ageing was observed after treatment54,55,56.'));
+ assert.equal(result.status,'unique');
+ for(const i of [6,8,10]) assert.ok(result.rects.some(r=>r[0]<=words[i][0] && r[2]>=words[i][2]));
+ assert.equal(locate(data,selector('Cardiac ageing was observed after treatment54,55,57.')).status,'not-found');
 });

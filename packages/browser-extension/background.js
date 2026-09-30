@@ -191,6 +191,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     switch (message?.type) {
       case "paperbridge:sync":
         return syncAnnotation(message.annotation);
+      case "paperbridge:list-annotations":
+        return callZotero("/paperbridge/list-annotations", message.locator, true);
       case "paperbridge:ping":
         return callZotero("/paperbridge/ping", {}, true);
       case "paperbridge:retry-outbox":

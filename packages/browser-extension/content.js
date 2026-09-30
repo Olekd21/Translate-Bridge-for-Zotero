@@ -1,5 +1,5 @@
 (() => {
-  const currentVersion = "1.0.6";
+  const currentVersion = "1.2.0";
   if (window.__paperBridgeVersion === currentVersion) return;
   document.getElementById("paper-bridge-root")?.remove();
   window.__paperBridgeVersion = currentVersion;
@@ -239,10 +239,10 @@
     diagnosticsButton.disabled = boundaryDetailsButton.disabled = false;
   }
 
-  function setStatus(text, tone = "neutral") {
+  function setStatus(text, tone = "neutral", diagnosticError = tone === "warn") {
     statusNode.textContent = text;
     statusNode.dataset.tone = tone;
-    diagnosticsButton.hidden = tone !== "warn" || state.anchor?.selectedLanguage !== "zh";
+    diagnosticsButton.hidden = !diagnosticError || state.anchor?.selectedLanguage !== "zh";
     boundaryDetailsButton.hidden = diagnosticsButton.hidden;
   }
 
@@ -302,6 +302,7 @@
   function activateAnchor(anchor) {
     if (!anchor || anchor === state.anchor) return;
     resetDiagnosticButtons();
+    diagnosticsButton.hidden = boundaryDetailsButton.hidden = true;
     saveCurrentDraft();
     state.mappingRequestId += 1;
     state.mappingInProgress = false;
@@ -421,6 +422,21 @@
     return "";
   }
 
+  function englishSentenceSegments(raw) {
+    // Intl can merge sentences when superscript citation numbers immediately
+    // follow the period. Keep offsets in the unchanged DOM text.
+    const base = Array.from(new Intl.Segmenter("en", { granularity: "sentence" }).segment(raw));
+    return base.flatMap(part => {
+      const cuts = [0];
+      const citations = /(?<=[a-z)])[.!?](?:\[\s*\d+(?:\s*[,–−-]\s*\d+)*\s*\]|\d+(?:\s*[,–−-]\s*\d+)*)\s+(?=[A-Z][a-z])/g;
+      for (const match of part.segment.matchAll(citations)) cuts.push(match.index + match[0].length);
+      cuts.push(part.segment.length);
+      return cuts.slice(0,-1).filter((start,i)=>start<cuts[i+1]).map((start,i)=>({
+        index:part.index+start, segment:part.segment.slice(start,cuts[i+1]),
+      }));
+    });
+  }
+
   function preserveSentenceBoundaries(element) {
     // Keep an actual English sentence attached to its DOM range before Chrome
     // translates it. No sentence-order or translation-similarity guess is used.
@@ -436,7 +452,7 @@
       // from the actual English text instead of permanently skipping this block.
       for (const span of existing.reverse()) span.replaceWith(...span.childNodes);
     }
-    const segments = Array.from(new Intl.Segmenter("en", { granularity: "sentence" }).segment(raw));
+    const segments = englishSentenceSegments(raw);
     if (segments.length < 2 || segments.length > 100) return;
     const texts = [];
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
@@ -503,16 +519,29 @@
     for (let i = 0; i + 1 < spans.length; i++) {
       const current = spans[i], next = spans[i + 1];
       if (current.contains(next) || current.querySelector("[data-pb-sentence]")) continue;
-      const tail = current.textContent.match(/[。！？][”’」』）)\]]*\s*([A-Za-z][A-Za-z‐‑‒–—-]{0,23})\s*$/u);
+      const tail = current.textContent.match(/[。！？][”’」』）)\]]*\s*([^。！？]+)$/u);
       const continuation = next.textContent.match(/^\s*([-‐‑‒–—]\s*[A-Za-z][A-Za-z0-9‐‑‒–—-]*)/u);
       const saved = sentenceRecord(next, element);
       const currentSaved = sentenceRecord(current, element);
-      if (!tail || !continuation || !saved || !currentSaved || !/[.!?][)\]"']*$/.test(currentSaved.text)) continue;
+      if (!tail || !saved || !currentSaved || !/[.!?][)\]"']*$/.test(currentSaved.text)) continue;
       const normalizeToken = value => value.toLowerCase().replace(/[‐‑‒–—]/g, "-").replace(/\s+/g, "");
-      const token = normalizeToken(tail[1] + continuation[1]);
-      // Only repair a split hyphenated term independently present in the next
-      // English sentence. Do not accept arbitrary extra words or Chinese clauses.
-      if (!normalizeToken(saved.text).includes(token)) continue;
+      const chineseTail = /[\u3400-\u9fff]/.test(tail[1]);
+      if (chineseTail) {
+        // Chrome may move an entire opening clause of the next sentence into
+        // the preceding span. Require one English sentence on each side and
+        // one complete Chinese sentence on each side, with an unfinished
+        // tail. Never repair a merged multi-sentence English marker by order.
+        if (englishSentenceSegments(currentSaved.text).length !== 1 ||
+            englishSentenceSegments(saved.text).length !== 1 ||
+            (current.textContent.match(/[。！？]/g) || []).length !== 1 ||
+            (next.textContent.match(/[。！？]/g) || []).length !== 1 ||
+            tail.index < 1 ||
+            !/[\u3400-\u9fff]/.test(next.textContent) ||
+            !/[\u3400-\u9fff]/.test(current.textContent.slice(0, tail.index))) continue;
+      } else {
+        const token = normalizeToken(tail[1] + (continuation?.[1] || ""));
+        if (!continuation || !normalizeToken(saved.text).includes(token)) continue;
+      }
       const offset = tail.index + tail[0].lastIndexOf(tail[1]);
       const walker = document.createTreeWalker(current, NodeFilter.SHOW_TEXT);
       let consumed = 0;
@@ -529,12 +558,120 @@
     return ranges;
   }
 
+  function boundaryEvidence(element, spans, index) {
+    const describe = (span) => {
+      if (!span) return null;
+      const record = sentenceRecord(span, element);
+      const keyRecord = sentenceByKey.get(span.dataset.pbSentence);
+      return {
+        marker: span.dataset.pbSentence,
+        chinese: normalizedReadableText(span.textContent).slice(0, 1500),
+        english: record?.text?.slice(0, 1500) || "",
+        cacheValid: Boolean(record),
+        keyExists: Boolean(keyRecord),
+        sameOwner: keyRecord?.paragraph === element,
+        ownerConnected: Boolean(keyRecord?.paragraph?.isConnected),
+        sameUrl: keyRecord?.url === location.href.split("#")[0],
+        copiesInParagraph: [...spans].filter(other => other.dataset.pbSentence === span.dataset.pbSentence).length,
+        englishSentences: record ? englishSentenceSegments(record.text).length : null,
+        chineseStops: (span.textContent.match(/[。！？]/g) || []).length,
+        nestedMarkers: span.querySelectorAll("[data-pb-sentence]").length,
+      };
+    };
+    const current = describe(spans[index]), next = describe(spans[index + 1]);
+    const blockers = [];
+    if (!current?.cacheValid) blockers.push("current-cache-invalid");
+    if (!next) blockers.push("no-next-marker");
+    else {
+      if (!next.cacheValid) blockers.push("next-cache-invalid");
+      if (next.englishSentences !== 1) blockers.push("next-english-not-single-sentence");
+      if (next.chineseStops !== 1) blockers.push("next-chinese-not-single-sentence");
+      if (!/[\u3400-\u9fff]/.test(next.chinese)) blockers.push("next-chinese-missing");
+    }
+    if (current?.englishSentences !== 1) blockers.push("current-english-not-single-sentence");
+    if (current?.chineseStops !== 1) blockers.push("current-chinese-not-single-sentence");
+    if (current?.nestedMarkers) blockers.push("nested-markers");
+    if (current?.english && !/[.!?][)\]"']*$/.test(current.english)) blockers.push("english-ending-not-terminal");
+    return { repairBlockers: blockers, neighboringMarkers: [...spans].slice(Math.max(0,index-1),index+4).map(describe) };
+  }
+
+  function selectionWithoutReferences(input) {
+    const fragment = input.cloneContents();
+    for (const node of fragment.querySelectorAll("sup, a[href]")) {
+      const links = node.tagName === "A" ? [node] : [...node.querySelectorAll("a[href]")];
+      if (/^[\s\d,，、–−-]+$/.test(node.textContent) && links.some(link => /(?:ref|bib|cit)/i.test(link.getAttribute("href") || ""))) node.remove();
+    }
+    return compactChinese(fragment.textContent);
+  }
+
   function capturedSentenceSelection(element, selectionRange, originalParagraph, diagnostic = {}) {
     const pieces = [];
     const spans = element.querySelectorAll("[data-pb-sentence]");
     diagnostic.sentenceAnchors = spans.length;
     diagnostic.hasEnglishParagraph = Boolean(originalParagraph);
     diagnostic.reason = spans.length ? "no-selected-sentence" : "no-sentence-anchors";
+    // Google Translate can clone the same marker around links/superscripts.
+    // Validate ownership and full source coverage rather than requiring each
+    // physical fragment to be the unique instance of its sentence key.
+    if (spans.length && originalParagraph &&
+        compactChinese(selectionRange.toString()) === compactChinese(element.textContent)) {
+      const coverage = new Uint8Array(originalParagraph.length);
+      const fragments = new Map();
+      let valid = true;
+      for (const span of spans) {
+        const saved = sentenceByKey.get(span.dataset.pbSentence);
+        const at = saved ? originalParagraph.indexOf(saved.text) : -1;
+        if (!saved || saved.paragraph !== element || saved.url !== location.href.split("#")[0] || at < 0 ||
+            originalParagraph.indexOf(saved.text, at + 1) >= 0) { valid = false; break; }
+        coverage.fill(1, at, at + saved.text.length);
+        const key = span.dataset.pbSentence;
+        fragments.set(key, [...(fragments.get(key) || []), span]);
+      }
+      for (const [key, copies] of fragments) {
+        if (copies.length > 1 && (copies.map(span => span.textContent).join("").match(/[。！？]/g) || []).length >
+            englishSentenceSegments(sentenceByKey.get(key).text).length) valid = false;
+      }
+      if (valid && originalParagraph.split("").every((ch, index) => coverage[index] || /\s/.test(ch))) {
+        diagnostic.reason = "captured";
+        diagnostic.mappingEvidence = "complete-paragraph-source-coverage";
+        return originalParagraph;
+      }
+    }
+    if (new Set([...spans].map(span => span.dataset.pbSentence)).size < spans.length) {
+      const groups = [], seen = new Set(); let valid = true;
+      for (const span of spans) {
+        const saved = sentenceByKey.get(span.dataset.pbSentence);
+        if (!saved || saved.paragraph !== element || saved.url !== location.href.split("#")[0] ||
+            !originalParagraph?.includes(saved.text)) { valid = false; break; }
+        const text = normalizedReadableText(span.textContent);
+        const ref = span.closest('a[href]') || span.querySelector('a[href]');
+        const citationOnly = /^[\s\d,，、–−-]*$/.test(text) &&
+          (text === "" || (ref && /(?:ref|bib|cit)/i.test(ref.getAttribute('href') || '')));
+        if (citationOnly) continue;
+        const key = span.dataset.pbSentence;
+        if (groups.at(-1)?.key === key) groups.at(-1).last = span;
+        else {
+          if (seen.has(key)) { valid = false; break; }
+          seen.add(key); groups.push({key,first:span,last:span,saved});
+        }
+      }
+      const recovered = []; let selectedText = "";
+      if (valid) for (const group of groups) {
+        const bounds = document.createRange(); bounds.setStartBefore(group.first); bounds.setEndAfter(group.last);
+        const clipped = selectionRange.cloneRange();
+        if (clipped.compareBoundaryPoints(Range.START_TO_START, bounds) < 0) clipped.setStart(bounds.startContainer,bounds.startOffset);
+        if (clipped.compareBoundaryPoints(Range.END_TO_END, bounds) > 0) clipped.setEnd(bounds.endContainer,bounds.endOffset);
+        const selected = compactChinese(clipped.toString()); if (!selected) continue;
+        const text = normalizedReadableText(bounds.toString());
+        if (selected !== compactChinese(text) || !/[。！？][”’」』）)\]\s\d,，、]*$/u.test(text) ||
+            (text.match(/[。！？]/g) || []).length !== englishSentenceSegments(group.saved.text).length) {valid=false;break;}
+        recovered.push(group.saved.text); selectedText += clipped.toString();
+      }
+      const source = recovered.join(" ");
+      if (valid && recovered.length && compactChinese(selectedText) === compactChinese(selectionRange.toString()) && originalParagraph.includes(source)) {
+        diagnostic.reason = "captured"; diagnostic.mappingEvidence = "contiguous-cloned-sentence-fragments"; return source;
+      }
+    }
     const logicalRanges = sentenceRanges(element, spans);
     for (let index = 0; index < spans.length; index++) {
       const span = spans[index];
@@ -548,6 +685,7 @@
       if (!compactChinese(selected)) continue;
       const saved = sentenceRecord(span, element);
       if (!saved || saved.paragraph !== element || saved.url !== location.href.split("#")[0]) {
+        diagnostic.boundary = { marker: span.dataset.pbSentence, selected: selected.slice(0,1500), ...boundaryEvidence(element, spans, index) };
         diagnostic.reason = "sentence-cache-missing"; return null;
       }
       if (!originalParagraph.includes(saved.text)) {
@@ -557,12 +695,13 @@
           !compactChinese(spans[index + 1].textContent) && sentenceRecord(spans[index + 1], element)) {
         diagnostic.reason = "translation-collapsed-sentences"; return null;
       }
-      if (compactChinese(selected) !== compactChinese(bounds.toString())) {
+      if (selectionWithoutReferences(range) !== selectionWithoutReferences(bounds)) {
         const before = bounds.cloneRange();
         before.setEnd(range.startContainer, range.startOffset);
         const after = bounds.cloneRange();
         after.setStart(range.endContainer, range.endOffset);
         diagnostic.boundary = {
+          ...boundaryEvidence(element, spans, index),
           marker: span.dataset.pbSentence,
           selected: selected.slice(0, 1500),
           markerChinese: normalizedReadableText(span.textContent).slice(0, 1500),
@@ -579,14 +718,49 @@
         };
         diagnostic.reason = "partial-sentence-boundary"; return null;
       }
-      pieces.push({ selected, original: saved.text });
+      pieces.push({ selected, original: saved.text, withoutReferences: selectionWithoutReferences(range) });
     }
     diagnostic.selectedSentences = pieces.length;
     if (!pieces.length) return null;
-    if (compactChinese(pieces.map(p => p.selected).join(" ")) !== compactChinese(selectionRange.toString())) {
+    if (pieces.map(p => p.withoutReferences).join("") !== selectionWithoutReferences(selectionRange)) {
+      const fragment = selectionRange.cloneContents();
+      for (const node of fragment.querySelectorAll("[data-pb-sentence]")) node.remove();
+      diagnostic.boundary = {
+        selected: normalizedReadableText(selectionRange.toString()).slice(0,4000),
+        coveredText: pieces.map(piece => piece.selected).join(" ").slice(0,4000),
+        unmarkedText: normalizedReadableText(fragment.textContent).slice(0,2000),
+        originalParagraph: originalParagraph.slice(0,6000),
+        coveredEnglish: pieces.map(piece => piece.original).join(" ").slice(0,6000),
+        unmarkedElements: [...fragment.querySelectorAll("a[href],sup,sub")].slice(0,30).map(node => ({tag:node.tagName,text:node.textContent,href:node.getAttribute("href")})),
+      };
       diagnostic.reason = "uncovered-selection-text"; return null;
     }
     const source = pieces.map(p => p.original).join(" ");
+    if (!originalParagraph.includes(source)) {
+      const referenceNumbers = new Set([...element.querySelectorAll('a[href]')]
+        .filter(link => /(?:ref|bib|cit)/i.test(link.getAttribute('href') || '') && /^[\s\d,，、–−-]+$/.test(link.textContent))
+        .flatMap(link => link.textContent.match(/\d+/g) || []));
+      const referenceGap = gap => !/[^\s\d.,，、;:()[\]–−-]/u.test(gap) &&
+        (gap.match(/\d+/g) || []).every(number => referenceNumbers.has(number));
+      let start = -1, end = 0, valid = true;
+      for (const piece of pieces) {
+        const at = originalParagraph.indexOf(piece.original, end);
+        if (at < 0 || originalParagraph.indexOf(piece.original, at + 1) >= 0 ||
+            (start >= 0 && !referenceGap(originalParagraph.slice(end, at)))) {valid=false;break;}
+        if (start < 0) start = at;
+        end = at + piece.original.length;
+      }
+      if (valid && start >= 0) {
+        if (compactChinese(selectionRange.toString()) === compactChinese(element.textContent)) {
+          if (!referenceGap(originalParagraph.slice(0,start)) || !referenceGap(originalParagraph.slice(end))) valid=false;
+          else {start=0;end=originalParagraph.length;}
+        }
+        if (valid) {
+          diagnostic.reason = "captured"; diagnostic.mappingEvidence = "verified-reference-gaps";
+          return originalParagraph.slice(start,end);
+        }
+      }
+    }
     diagnostic.reason = originalParagraph.includes(source) ? "captured" : "noncontiguous-source";
     return originalParagraph.includes(source) ? source : null;
   }
@@ -703,9 +877,7 @@
   function sentenceCandidates(paragraph) {
     if ("Segmenter" in Intl) {
       return Array.from(
-        new Intl.Segmenter("en", { granularity: "sentence" }).segment(
-          paragraph,
-        ),
+        englishSentenceSegments(paragraph),
         (part) => part.segment.trim(),
       ).filter((part) => part.length >= 8);
     }
@@ -980,6 +1152,7 @@
         translatedParagraph: anchor.paragraph,
         selectedLanguage: "en",
         selectionMode: "translated",
+        diagnosticParts: anchor.parts,
         parts: undefined,
         mappingMethod: "verified-blocks",
         mappingScore: Math.min(...mapped.map((part) => part.mappingScore)),
@@ -1193,7 +1366,7 @@
       state.anchor = mappedAnchor;
       state.translation = translatedSelection;
       renderAnchor();
-      setStatus("已匹配英文原文，可同步为 Zotero PDF 高亮", "good");
+      setStatus("已找回英文原文；同步时还需在 Zotero PDF 中定位", "good");
     } catch (error) {
       if (requestId !== state.mappingRequestId) return;
       sourceState.textContent = "未匹配";
@@ -1246,6 +1419,7 @@
         setStatus(
           "仍在等待 Zotero 读取 PDF；请勿重复同步。超过时限会显示原因。",
           "warn",
+          false,
         );
     }, 8000);
     setStatus("正在读取并定位 PDF 全文；首次同步可能需要几秒……");
@@ -1278,6 +1452,7 @@
             pageLabel: response.match?.pageLabel || "",
           };
           openSelectionButton.disabled = false;
+          void loadSavedAnnotations();
         } else {
           setStatus(response.error || "未能创建 PDF 原生高亮", "warn");
         }
@@ -1343,6 +1518,7 @@
         setStatus(
           "仍在等待 PDF 读取或阅读器打开；超过时限会显示具体原因。",
           "warn",
+          false,
         );
     }, 8000);
     openSelectionButton.disabled = true;
@@ -1435,7 +1611,9 @@
       doi: extractDoi(),
       selectedCharacters: state.anchor?.exact?.length || 0,
       language: state.anchor?.selectedLanguage,
-      blocks: state.anchor?.parts?.map(part => {
+      originalSelectionLanguage: state.anchor?.selectionMode === "translated" ? "zh" : state.anchor?.selectedLanguage,
+      mappingMethod: state.anchor?.mappingMethod || null,
+      blocks: (state.anchor?.parts || state.anchor?.diagnosticParts)?.map(part => {
         const { boundary, ...summary } = part.sentenceDiagnostic || {};
         return {
           selectedCharacters: part.exact.length,
@@ -1499,10 +1677,169 @@
     }
   });
 
+  // Read-only projection of existing Zotero annotations. CSS Highlights avoid
+  // rewriting publisher/translation DOM and leave normal text selection intact.
+  const savedSection = document.createElement("section");
+  savedSection.className = "pb-saved-section";
+  savedSection.innerHTML = `<details open><summary>已有 Zotero 批注</summary><button type="button" class="pb-saved-refresh">刷新批注</button><p class="pb-saved-status" role="status">打开侧栏后读取已有批注</p><div class="pb-saved-list"></div></details>`;
+  root.querySelector(".pb-reading-scroll").prepend(savedSection);
+  const savedStatus = savedSection.querySelector(".pb-saved-status");
+  const savedList = savedSection.querySelector(".pb-saved-list");
+  const savedRefresh = savedSection.querySelector(".pb-saved-refresh");
+  let savedAnnotations = [], savedRanges = [], savedRequest = 0, savedTimer;
+  let savedLoadedUrl = "";
+  const highlightStyle = document.createElement("style");
+  root.append(highlightStyle);
+  const quoteKey = text => String(text || "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+  function clearSavedHighlights() {
+    for (const hit of savedRanges) globalThis.CSS?.highlights?.delete(hit.name);
+    savedRanges = []; highlightStyle.textContent = "";
+  }
+  function locateSavedQuote(annotation) {
+    const needle = quoteKey(annotation.text);
+    if (needle.length < 12) return null;
+    const found = [];
+    const containers = [...document.querySelectorAll("p,li,blockquote,figcaption,td,th,h1,h2,h3,h4,h5,h6,div")]
+      .filter(el => !root.contains(el) && !el.querySelector("p,li,blockquote,figcaption,td,th,div") && el.getClientRects().length);
+    for (const el of containers) {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      let normalized = ""; const positions = [];
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (node.parentElement.closest("script,style,noscript,[hidden]")) continue;
+        const visible = document.createRange(); visible.selectNodeContents(node);
+        if (!visible.getClientRects().length) continue;
+        for (let i = 0; i < node.length;) {
+          const ch = String.fromCodePoint(node.textContent.codePointAt(i));
+          const key = quoteKey(ch);
+          normalized += key;
+          for (let j = 0; j < key.length; j++) positions.push({ node, start: i, end: i + ch.length });
+          i += ch.length;
+        }
+      }
+      let at = normalized.indexOf(needle);
+      while (at >= 0) {
+        const first = positions[at], last = positions[at + needle.length - 1];
+        const range = document.createRange(); range.setStart(first.node, first.start); range.setEnd(last.node, last.end);
+        found.push(range); at = normalized.indexOf(needle, at + 1);
+        if (found.length > 1) return null;
+      }
+      // Translated text is eligible only when existing sentence mapping proves
+      // the exact complete source quote; partial or drifted markers stay listed.
+      if (/[\u3400-\u9fff]/.test(el.textContent)) {
+        const spans = [...el.querySelectorAll("[data-pb-sentence]")];
+        const paragraph = capturedOriginal(el);
+        if (paragraph && quoteKey(paragraph) === needle) {
+          const range = document.createRange(); range.selectNodeContents(el);
+          if (capturedSentenceSelection(el, range, paragraph)) { found.push(range); continue; }
+        }
+        let recoveredClones = false;
+        for (const key of new Set(spans.map(span => span.dataset.pbSentence))) {
+          const copies = spans.filter(span => span.dataset.pbSentence === key);
+          const record = sentenceByKey.get(key);
+          if (copies.length < 2 || !record || quoteKey(record.text) !== needle || !paragraph) continue;
+          const range = document.createRange(); range.setStartBefore(copies[0]); range.setEndAfter(copies.at(-1));
+          const verified = capturedSentenceSelection(el, range, paragraph);
+          if (verified && quoteKey(verified) === needle) {found.push(range);recoveredClones=true;}
+        }
+        if (recoveredClones) continue;
+        const bounds = sentenceRanges(el, spans);
+        for (let i = 0; i < spans.length; i++) {
+          let source = "";
+          for (let j = i; j < spans.length; j++) {
+            const record = sentenceRecord(spans[j], el);
+            if (!record) break;
+            source += quoteKey(record.text);
+            if (!needle.startsWith(source)) break;
+            if (source === needle) {
+              const range = bounds[i].cloneRange(); range.setEnd(bounds[j].endContainer, bounds[j].endOffset);
+              const chinese = normalizedReadableText(range.toString());
+              if (!/[。！？][”’」』）)\]\s\d,，、]*$/u.test(chinese) ||
+                  (chinese.match(/[。！？]/g) || []).length !== j - i + 1) break;
+              const original = originalTextByElement.get(el);
+              const paragraph = typeof original === "string" ? original : original?.text;
+              const verified = paragraph && capturedSentenceSelection(el, range, paragraph);
+              if (verified && quoteKey(verified) === needle) found.push(range);
+              break;
+            }
+          }
+        }
+      }
+      if (found.length > 1) return null;
+    }
+    return found.length === 1 ? found[0] : null;
+  }
+  function renderSavedAnnotations() {
+    clearSavedHighlights(); savedList.replaceChildren();
+    if (savedLoadedUrl !== location.href.split("#")[0]) return;
+    savedAnnotations.forEach((annotation, index) => {
+      const card = document.createElement("article"); card.className = "pb-saved-card";
+      const color = /^#[0-9a-f]{6}$/i.test(annotation.color || "") ? annotation.color : "#ffd400";
+      card.style.borderLeftColor = color;
+      const range = locateSavedQuote(annotation);
+      const meta = document.createElement("p");
+      meta.textContent = `第 ${annotation.pageLabel || "?"} 页 · ${range ? "已定位网页" : "仅侧栏显示，未可靠定位"}`;
+      const quote = document.createElement("blockquote"); quote.textContent = annotation.text || "非文字批注";
+      const comment = document.createElement("p");
+      // Comments may contain rich-text HTML. Parse inertly and insert text only.
+      const inertComment = document.createElement("template");
+      inertComment.innerHTML = annotation.comment || "";
+      comment.textContent = inertComment.content.textContent;
+      const open = document.createElement("button"); open.type = "button"; open.textContent = "在 Zotero 中打开";
+      open.addEventListener("click", async () => {
+        try {
+          const result = await chrome.runtime.sendMessage({type:"paperbridge:open-annotation",target:{attachmentID:annotation.attachmentID,annotationKey:annotation.annotationKey}});
+          if (!result?.ok) savedStatus.textContent = result?.error || "打开批注失败";
+        } catch (error) { savedStatus.textContent = error.message; }
+      });
+      card.append(meta, quote, comment, open); savedList.append(card);
+      if (range && globalThis.CSS?.highlights && globalThis.Highlight) {
+        const name = `pb-saved-${index}`;
+        CSS.highlights.set(name, new Highlight(range));
+        highlightStyle.textContent += `::highlight(${name}){background-color:${color}70;text-decoration:underline ${color};}`;
+        savedRanges.push({name,range,card});
+        const locate = document.createElement("button"); locate.type = "button"; locate.textContent = "查看网页位置";
+        locate.addEventListener("click", () => range.startContainer.parentElement.scrollIntoView({block:"center",behavior:"smooth"}));
+        card.append(locate);
+      }
+    });
+    savedStatus.textContent = `共 ${savedAnnotations.length} 条批注，${savedRanges.length} 条已标到网页。`;
+  }
+  async function loadSavedAnnotations() {
+    const request = ++savedRequest, url = location.href.split("#")[0];
+    savedRefresh.disabled = true; savedStatus.textContent = "正在读取 Zotero 批注…";
+    try {
+      const response = await chrome.runtime.sendMessage({type:"paperbridge:list-annotations",locator:documentLocator()});
+      if (request !== savedRequest || url !== location.href.split("#")[0]) return;
+      clearSavedHighlights(); savedList.replaceChildren(); savedAnnotations = []; savedLoadedUrl = url;
+      if (!response?.ok) { savedStatus.textContent = response?.error || "无法读取批注，请确认 Zotero 已打开且两端插件均已更新"; return; }
+      savedAnnotations = response.annotations || []; renderSavedAnnotations();
+    } catch (error) {
+      if (request === savedRequest) {
+        clearSavedHighlights(); savedAnnotations = []; savedList.replaceChildren();
+        savedStatus.textContent = error.message;
+      }
+    }
+    finally { if (request === savedRequest) savedRefresh.disabled = false; }
+  }
+  savedRefresh.addEventListener("click", loadSavedAnnotations);
+  document.addEventListener("click", event => {
+    if (root.contains(event.target) || getSelection()?.toString()) return;
+    const hit = savedRanges.find(hit => [...hit.range.getClientRects()].some(rect => event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom));
+    if (hit) { panel.dataset.open = "true"; hit.card.scrollIntoView({block:"nearest"}); }
+  });
+  new MutationObserver(records => {
+    if (!savedAnnotations.length || records.every(record => root.contains(record.target))) return;
+    clearTimeout(savedTimer); savedTimer = setTimeout(renderSavedAnnotations, 700);
+  }).observe(document.documentElement, {subtree:true,childList:true,characterData:true});
+  const autoLoadSaved = () => { if (extractDoi()) void loadSavedAnnotations(); };
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", autoLoadSaved, {once:true});
+  else autoLoadSaved();
+
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.type === "paperbridge:toggle") {
       if (panel.dataset.open === "true") panel.dataset.open = "false";
-      else void openPanel(state.anchor);
+      else { void openPanel(state.anchor); void loadSavedAnnotations(); }
     }
   });
 })();

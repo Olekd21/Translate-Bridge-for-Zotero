@@ -6,7 +6,20 @@
 
 [下载最新安装包](https://github.com/Olekd21/Translate-Bridge-for-Zotero/releases/latest) · [安装与用户手册](docs/用户手册.md) · [反馈问题](https://github.com/Olekd21/Translate-Bridge-for-Zotero/issues)
 
-**1.0.0**：Chrome 与 Zotero 插件统一版本号，同一包兼容 Zotero 9/10。跨领域测试方法、结果与适用边界见[稳定性核查报告](docs/稳定性核查-20260923.md)。
+## 1.2 版本更新（1.2.0）
+
+**新增：把 Zotero 中已有的批注带回论文网页。** 侧栏可查看原文、笔记、颜色与页码；能可靠定位的批注会在网页正文标记，点击即可查看。修改 Zotero 批注后，点击“刷新批注”。
+
+**重点修复与优化：**
+
+- **中文选句更稳**：改进 Chrome 翻译造成的跨句片段、克隆标记、引用数字和缓存失效处理；定位失败时再显示诊断，复制提示可自动恢复。
+- **PDF 长段落更稳**：支持部分跨页、跨栏及中间夹有稀疏图页的段落；修复断行与英美拼写兼容冲突、引用数字坐标偏移。科学数字、基因名和否定词仍严格核对。
+- **同步状态更清楚**：明确区分“已找回英文”与“已在 PDF 定位”，读取超时会提示原因；跨页批注保存失败时撤销本次已写入的部分。
+- **实际文库回归**：16 篇 PDF 抽样，859 个文本块实际执行定位；最近一轮修复额外找回12处，这12处均在隔离 Zotero 9/10 中成功保存。加密读取失败的两篇不计为通过。
+
+**升级必须同时更新 Chrome 扩展和 Zotero 插件到 1.2.0。** Zotero 安装 XPI 后完全退出再启动；Chrome 更新扩展后，将论文恢复英文、刷新页面，再开启整页翻译。通常无需重新配对。两端与总包的版本号一致。
+
+[查看完整更新与验证边界](docs/RELEASE-1.2.0.md) · [下载 1.2 完整安装包](https://github.com/Olekd21/Translate-Bridge-for-Zotero/releases/download/v1.2.0/translate-bridge-for-zotero-1.2.0.zip)
 
 ## 当前能力
 
@@ -22,13 +35,13 @@
 
 ## 安装
 
-在 Releases 下载 `translate-bridge-for-zotero-1.0.0.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
+在 Releases 下载 `translate-bridge-for-zotero-1.2.0.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
 
 需要同一电脑上的 Zotero 桌面版、Chrome 138+ 以及带文字层的论文 PDF。Zotero Connector 可选；不依赖 Better Notes、LLM-for-Zotero、Zotero PDF Translate、Style 或 Better BibTeX。详细步骤见 [用户手册](docs/用户手册.md)。分发产物位于 `dist/`：
 
-- `translate-bridge-chrome-1.0.0.zip`
-- `translate-bridge-zotero-1.0.0.xpi`
-- `translate-bridge-for-zotero-1.0.0.zip`（完整安装包）
+- `translate-bridge-chrome-1.2.0.zip`
+- `translate-bridge-zotero-1.2.0.xpi`
+- `translate-bridge-for-zotero-1.2.0.zip`（完整安装包）
 
 ## 从源码构建与验证
 

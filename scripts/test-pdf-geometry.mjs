@@ -115,7 +115,10 @@ const nonAdjacent = locateQuoteGeometry(
   { pages: [firstPage, makePage([]), secondPage] },
   crossSelector,
 );
-assert.equal(nonAdjacent.status, "not-found");
+assert.equal(nonAdjacent.status, "unique");
+assert.equal(nonAdjacent.additionalPages[0].pageIndex, 2);
+assert.equal(nonAdjacent.nextPageRects, undefined);
+assert.equal(locateQuoteGeometry({pages:[firstPage,makePage([[40,300,"Intervening body text must not be skipped"]]),secondPage]},crossSelector).status,"not-found");
 const repeated = locateQuoteGeometry(
   { pages: [firstPage, secondPage, firstPage, secondPage] },
   crossSelector,

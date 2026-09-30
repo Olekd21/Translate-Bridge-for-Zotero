@@ -12,6 +12,7 @@ import { withDeadline } from "./deadline";
 const { config } = pkg;
 const PING_PATH = "/paperbridge/ping";
 const ANNOTATION_PATH = "/paperbridge/annotations";
+const LIST_ANNOTATIONS_PATH = "/paperbridge/list-annotations";
 const OPEN_PATH = "/paperbridge/open";
 const OPEN_DOCUMENT_PATH = "/paperbridge/open-document";
 const OPEN_SELECTION_PATH = "/paperbridge/open-selection";
@@ -268,7 +269,30 @@ async function saveNativeHighlight(
   attachment: any,
   annotation: BridgeAnnotation,
   match: GeometryMatch,
-) {
+): Promise<any> {
+  if (match.additionalPages?.length) {
+    // Zotero's nextPageRects always means the immediately following page.
+    // saveFromJSON starts its own transaction. Do not wrap it in another
+    // transaction (that waits for the outer transaction and deadlocks).
+    if (annotation.annotationKey) throw new Error("跨图页批注请作为新批注保存");
+    const saved: any[] = [];
+    try {
+      const { additionalPages = [], ...first } = match;
+      const created = await saveNativeHighlight(parent, attachment, annotation, first);
+      saved.push(created);
+      for (const part of additionalPages) {
+        saved.push(await saveNativeHighlight(parent, attachment,
+          { ...annotation, annotationKey: undefined },
+          { status: "unique", occurrences: 1, ...part }));
+      }
+      match.pageLabel = [first.pageIndex!, ...additionalPages.map((part) => part.pageIndex)]
+        .map((index) => pageLabelFor(parent, index)).join("、");
+      return created;
+    } catch (error) {
+      for (const item of saved.reverse()) await item.eraseTx();
+      throw error;
+    }
+  }
   if (match.pageIndex === undefined || !match.rects?.length) {
     throw new Error("缺少 PDF 原文坐标");
   }
@@ -337,6 +361,45 @@ class PingEndpoint {
         isolatedPdfWorker: true,
       },
     });
+  }
+}
+
+class ListAnnotationsEndpoint {
+  supportedMethods = ["POST", "OPTIONS"];
+  supportedDataTypes = ["application/json"];
+  permitBookmarklet = false;
+  async init(request: EndpointRequest) {
+    if (request.method === "OPTIONS") return jsonResponse(200, { ok: true });
+    if (requestHeader(request, "X-Paper-Bridge-Token") !== getOrCreatePairingToken())
+      return jsonResponse(401, { ok: false, error: "配对码不正确" });
+    try {
+      const payload = parseDocumentBody(request);
+      const selection = await findParentItem(payload);
+      if (!selection) return jsonResponse(404, { ok: false, error: "Zotero 中未找到这篇文章" });
+      const parent = selection.item;
+      const doi = normalizeDOI(payload.document?.doi);
+      // Reading annotations must never fall back to a different paper by title.
+      if (doi ? normalizeDOI(parent.getField("DOI")) !== doi :
+          String(parent.getField("title")).trim().toLowerCase() !== String(payload.document?.title || "").trim().toLowerCase())
+        return jsonResponse(409, { ok: false, error: "文章身份不能可靠确认，未读取批注" });
+      const annotations = [];
+      for (const id of parent.getAttachments()) {
+        const attachment = Zotero.Items.get(id);
+        if (!attachment?.isPDFAttachment?.() || attachment.deleted) continue;
+        for (const annotation of attachment.getAnnotations()) {
+          if (annotation.deleted) continue;
+          annotations.push({
+            annotationKey: annotation.key, attachmentID: attachment.id,
+            type: annotation.annotationType, text: annotation.annotationText || "",
+            comment: annotation.annotationComment || "", color: annotation.annotationColor,
+            pageLabel: annotation.annotationPageLabel || "",
+          });
+        }
+      }
+      return jsonResponse(200, { ok: true, annotations, candidateCount: selection.candidateCount });
+    } catch (error) {
+      return jsonResponse(500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+    }
   }
 }
 
@@ -423,6 +486,7 @@ class AnnotationEndpoint {
         attachmentID: located.attachment.id,
         match: located.match,
         nativePdfHighlightCreated: true,
+        annotationCount: 1 + (located.match.additionalPages?.length || 0),
         diagnostics: located.diagnostics,
       });
     } catch (error) {
@@ -644,6 +708,7 @@ export function registerBridgeServer() {
   const endpoints = (Zotero.Server as any).Endpoints;
   endpoints[PING_PATH] = PingEndpoint;
   endpoints[ANNOTATION_PATH] = AnnotationEndpoint;
+  endpoints[LIST_ANNOTATIONS_PATH] = ListAnnotationsEndpoint;
   endpoints[OPEN_PATH] = OpenAnnotationEndpoint;
   endpoints[OPEN_DOCUMENT_PATH] = OpenDocumentEndpoint;
   endpoints[OPEN_SELECTION_PATH] = OpenSelectionEndpoint;
@@ -654,6 +719,7 @@ export function unregisterBridgeServer() {
   const endpoints = (Zotero.Server as any).Endpoints;
   delete endpoints[PING_PATH];
   delete endpoints[ANNOTATION_PATH];
+  delete endpoints[LIST_ANNOTATIONS_PATH];
   delete endpoints[OPEN_PATH];
   delete endpoints[OPEN_DOCUMENT_PATH];
   delete endpoints[OPEN_SELECTION_PATH];

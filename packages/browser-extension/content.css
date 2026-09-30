@@ -457,6 +457,10 @@
     box-shadow 150ms ease;
 }
 
+#paper-bridge-root .pb-action[hidden] {
+  display: none !important;
+}
+
 #paper-bridge-root .pb-action svg {
   fill: none;
   height: 16px;
@@ -559,3 +563,12 @@
     transition: none;
   }
 }
+
+#paper-bridge-root .pb-saved-section { margin: 12px 0 20px; color: #343941; font: 14px/1.6 system-ui, sans-serif; }
+#paper-bridge-root .pb-saved-section summary { cursor: pointer; font-weight: 650; }
+#paper-bridge-root .pb-saved-section button { cursor: pointer; color: #006fdb; background: #f1f6ff; border: 1px solid #d9e6fa; border-radius: 7px; padding: 6px 10px; margin: 5px 8px 5px 0; font: inherit; }
+#paper-bridge-root .pb-saved-section button:disabled { opacity: .5; cursor: wait; }
+#paper-bridge-root .pb-saved-card { margin: 12px 0; padding: 12px; background: white; border: 1px solid #e0e3e8; border-left: 4px solid; border-radius: 8px; overflow-wrap: anywhere; }
+#paper-bridge-root .pb-saved-card p { margin: 5px 0; white-space: pre-wrap; }
+#paper-bridge-root .pb-saved-card blockquote { margin: 8px 0; padding: 0; font-size: 13px; color: #58616b; max-height: 160px; overflow: auto; white-space: pre-wrap; }
+#paper-bridge-root .pb-saved-status { color: #657080; }

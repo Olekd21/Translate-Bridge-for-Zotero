@@ -19,6 +19,7 @@ function harness(translations = {}) {
     }),
   });
   vm.runInContext(
+    slice("  function englishSentenceSegments(", "  function preserveSentenceBoundaries(") +
     slice(
       "  function normalizedReadableText(",
       "  function isPdfAnchorReady(",
