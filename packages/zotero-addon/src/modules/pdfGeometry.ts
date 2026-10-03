@@ -170,7 +170,7 @@ function canonicalScientificText(raw: string, owners?: PageWord[]) {
   }
   // Sentence-final reference runs: preserve their complete numeric set, merely
   // expand bounded ranges (54–56 => 54,55,56); never strip bare numbers.
-  for (const match of raw.matchAll(/(?<=[a-z)])\s*(\d{1,3}(?:\s*[,–-]\s*\d{1,3})+)(?=[.;:])/g)) {
+  for (const match of raw.matchAll(/(?<=[a-z)])\s*(\d{1,3}(?:\s*[,–-]\s*\d{1,3})+)(?!\d|\.\d)(?=[,.;:]|\s*[a-z])/g)) {
     const value = match[1];
     // A comma-only run already has the same compact text. Rewriting its spaces
     // would shift digit ownership onto punctuation in the PDF geometry index.
@@ -319,9 +319,10 @@ function compactCharacterCandidatesForMode(
   queryText: string,
   method: "compact-character-sequence" | "column-compact-character-sequence",
   useSpellings: boolean,
+  minimumCharacters = 24,
 ): Candidate[] {
   const query = compactCharacters(queryText, useSpellings);
-  if (query.length < 24) return [];
+  if (query.length < minimumCharacters) return [];
 
   const { text: page, owners } = compactIndex(words, useSpellings);
 
@@ -360,10 +361,11 @@ function compactCharacterCandidatesForMode(
 function compactCharacterCandidates(
   words: PageWord[], pageIndex: number, pageHeight: number, queryText: string,
   method: "compact-character-sequence" | "column-compact-character-sequence",
+  minimumCharacters = 24,
 ): Candidate[] {
   return [
-    ...compactCharacterCandidatesForMode(words, pageIndex, pageHeight, queryText, method, false),
-    ...compactCharacterCandidatesForMode(words, pageIndex, pageHeight, queryText, method, true),
+    ...compactCharacterCandidatesForMode(words, pageIndex, pageHeight, queryText, method, false, minimumCharacters),
+    ...compactCharacterCandidatesForMode(words, pageIndex, pageHeight, queryText, method, true, minimumCharacters),
   ];
 }
 
@@ -531,12 +533,19 @@ function isSkippableFigurePage(rawPage: unknown) {
   if (!central.length) return true;
   const rows = new Map<number,string[]>();
   for (const word of central) rows.set(word.lineIndex,[...(rows.get(word.lineIndex) || []),word.text]);
-  const lines = [...rows.values()].map(parts => parts.join(" "));
+  const lines = [...rows.values()].map(parts => parts.join(" ")
+    .replace(/\b(?:[A-Za-z]\s+){2,}[A-Za-z]\b/g, letters => letters.replace(/\s/g, "")));
   const lengths = lines.map(line => (line.match(/[\p{L}]+/gu) || []).length);
+  // Large multi-panel microscopy figures can exceed 160 label words without
+  // containing prose. Require independent panel, scale-bar and statistical
+  // evidence before raising that label budget; dense tables alone do not qualify.
+  const microscopyPanels = lines.filter(line=>/^(?:[a-z]\s*){1,4}$/.test(line.trim())).length >= 4 &&
+    lines.some(line=>/\b\d+\s*[µμ]m\b/u.test(line)) &&
+    lines.filter(line=>/^P\s*[=<]/.test(line.trim())).length >= 4;
   // Figure panels often contain many short labels. Never skip a prose line,
   // complete textual sentence, dense table, or a page with unknown geometry.
   return lines.length >= 8 && lengths.every(length => length <= 6) &&
-    lengths.reduce((sum,length)=>sum+length,0) <= 160 &&
+    lengths.reduce((sum,length)=>sum+length,0) <= (microscopyPanels ? 400 : 160) &&
     lengths.filter(length => length <= 3).length / lengths.length >= 0.8 &&
     !lines.some((line,index)=>lengths[index] >= 3 && /[.!?。！？]\s*$/.test(line));
 }
@@ -556,13 +565,15 @@ function crossPageMatch(data: RecognizerData, query: string[]): GeometryMatch {
         height,
         text,
         "compact-character-sequence",
+        query.length >= 20 ? 4 : 24,
       ),
     );
   };
   for (let pageIndex = 0; pageIndex + 1 < pages.length; pageIndex++) {
     // Most pages cannot contain the beginning. Avoid rebuilding every possible
     // long query split for those pages.
-    if (!findPart(pages[pageIndex], pageIndex, query.slice(0, 8).join(" ")).length) continue;
+    const minimum = query.length >= 20 ? 3 : 8;
+    if (!findPart(pages[pageIndex], pageIndex, query.slice(0, minimum).join(" ")).length) continue;
     let following = pageIndex + 1;
     // Skip at most two blank/margin-only or sparse-label figure pages.
     // The full query still has to match exactly across the retained pages.
@@ -571,7 +582,7 @@ function crossPageMatch(data: RecognizerData, query: string[]): GeometryMatch {
       if (!isSkippableFigurePage(pages[following])) break;
       following++;
     }
-    for (let split = 8; split <= query.length - 8; split++) {
+    for (let split = minimum; split <= query.length - minimum; split++) {
       const first = findPart(
         pages[pageIndex],
         pageIndex,
@@ -585,6 +596,10 @@ function crossPageMatch(data: RecognizerData, query: string[]): GeometryMatch {
       );
       for (const left of first) {
         for (const right of second) {
+          // A short continuation is allowed only at a physical page edge;
+          // the rest of this substantial sentence must still match exactly.
+          if (split < 8 && Math.max(...left.words.map(w=>w.rect[3])) < left.pageHeight * 0.65) continue;
+          if (query.length - split < 8 && Math.min(...right.words.map(w=>w.rect[1])) > right.pageHeight * 0.2) continue;
           const rects = rectsForCandidate(left);
           const nextPageRects = rectsForCandidate(right);
           const key = JSON.stringify({ pageIndex, following, rects, nextPageRects });
@@ -629,6 +644,32 @@ export function locateQuoteGeometry(
   let rawCandidates = (data.pages || []).flatMap((page, pageIndex) =>
     candidatesForPage(page, pageIndex, query, prefix, suffix, selector.exact),
   );
+  // Apply the same adjacent-context evidence to compact/column matches as to
+  // token matches. Eight tokens alone are often identical in figure legends.
+  const before = compactCharacters(selector.prefix || "").slice(-72);
+  const after = compactCharacters(selector.suffix || "").slice(0,72);
+  const heading = typeof selector.heading === "string" &&
+    /^(?:extended\s+data\s+)?fig(?:ure)?\.?\s*\d+\b/i.test(selector.heading.trim())
+    ? compactCharacters(selector.heading).slice(0,96) : "";
+  for (const candidate of rawCandidates) {
+    const page = data.pages![candidate.pageIndex];
+    const {words} = pageWords(page);
+    let evidence = 0;
+    for (const ordered of [words, wordsInColumnOrder(words, Number((page as any)?.[0]) || 0)]) {
+      const left = ordered.indexOf(candidate.words[0]), right = ordered.indexOf(candidate.words.at(-1)!);
+      if (left < 0 || right < left) continue;
+      const leading = compactCharacters(reconstructedText(ordered.slice(Math.max(0,left-50),left)));
+      const trailing = compactCharacters(reconstructedText(ordered.slice(right+1,right+51)));
+      evidence = Math.max(evidence,
+        (before.length >= 16 && leading.endsWith(before) ? 0.5 : 0) +
+        (after.length >= 16 && trailing.startsWith(after) ? 0.5 : 0));
+    }
+    // Do not compound the old short-token score: longer context is stronger.
+    if (evidence) candidate.score = 2 + evidence;
+    // Repeated legend sentences are disambiguated by the actual English
+    // caption title captured before translation, never by the current page.
+    if (heading.length >= 24 && compactIndex(words).text.includes(heading)) candidate.score += 4;
+  }
   if (rawCandidates.some((candidate) => candidate.score >= 0.97)) {
     rawCandidates = rawCandidates.filter((candidate) => candidate.score >= 0.97);
   }

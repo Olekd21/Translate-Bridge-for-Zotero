@@ -403,6 +403,159 @@ class ListAnnotationsEndpoint {
   }
 }
 
+const importJobs = new Map<number, {state:string; error?:string}>();
+let importWork: Promise<unknown> = Promise.resolve();
+class ImportDocumentEndpoint {
+  supportedMethods=["POST","OPTIONS"];
+  supportedDataTypes=["application/json"];
+  permitBookmarklet=false;
+  async init(request:EndpointRequest) {
+    if(request.method==="OPTIONS")return jsonResponse(200,{ok:true});
+    if(requestHeader(request,"X-Paper-Bridge-Token")!==getOrCreatePairingToken())return jsonResponse(401,{ok:false,error:"配对码不正确"});
+    const action=async()=>{
+      try {
+        const body=(typeof request.data==="string"?JSON.parse(request.data):request.data) as any;
+        if(body?.action==='status')return jsonResponse(200,{ok:true,...(importJobs.get(body.itemID)||{state:'unknown'})});
+        const doc=body?.document;
+        if(!doc || typeof doc.title!=='string' || !doc.title.trim() || doc.title.length>2000 || !/^https?:\/\//i.test(doc.url||''))
+          return jsonResponse(400,{ok:false,error:"缺少论文标题或有效网页地址"});
+        const libraryID=Zotero.Libraries.userLibraryID;
+        const doi=normalizeDOI(doc.doi);
+        const search=new Zotero.Search();search.addCondition("libraryID","is",String(libraryID));
+        search.addCondition(doi?'DOI':'url','is',doi||doc.url);
+        const existing=(await search.search()).map((id:number)=>Zotero.Items.get(id)).find((item:any)=>item?.isRegularItem()&&!item.deleted);
+        const item=existing||new Zotero.Item('journalArticle');
+        if(!existing) {
+          item.libraryID=libraryID;item.setField('title',doc.title.trim());item.setField('url',doc.url);
+          if(doi)item.setField('DOI',doi);
+          for(const field of ['publicationTitle','date','volume','issue','pages','ISSN'])
+            if(typeof doc[field]==='string' && doc[field].length<=1000)item.setField(field,doc[field]);
+          item.setCreators((Array.isArray(doc.authors)?doc.authors:[]).slice(0,100).filter((name:any)=>typeof name==='string'&&name.trim()).map((name:string)=>({creatorType:'author',fieldMode:1,lastName:name.trim()})));
+          await item.saveTx();
+        }
+        const hasPDF=item.getAttachments().some((id:number)=>Zotero.Items.get(id)?.isPDFAttachment());
+        if(hasPDF)importJobs.set(item.id,{state:'pdf-saved'});
+        else if(!importJobs.has(item.id)) {
+          importJobs.set(item.id,{state:'fetching-pdf'});
+          void (async()=>{
+            try {
+              const pdf=await (Zotero.Attachments as any).addAvailableFile(item);
+              importJobs.set(item.id,{state:pdf?.isPDFAttachment?.()?'pdf-saved':'no-pdf'});
+            }catch(error){importJobs.set(item.id,{state:'no-pdf',error:error instanceof Error?error.message:String(error)});}
+          })();
+        }
+        return jsonResponse(200,{ok:true,itemID:item.id,existing:Boolean(existing),...importJobs.get(item.id)});
+      }catch(error){return jsonResponse(500,{ok:false,error:error instanceof Error?error.message:String(error)});}
+    };
+    const result=importWork.then(action,action);importWork=result.catch(()=>{});return result;
+  }
+}
+
+const webSelections = new Map<string, {expires:number; exact:string; doi:string; url:string}>();
+export function queueWebSelection(exact:string, doi:string, url:string) {
+  const now=Date.now();
+  for(const [key,value] of webSelections) if(value.expires<now) webSelections.delete(key);
+  while(webSelections.size>=50) webSelections.delete(webSelections.keys().next().value!);
+  const ticket=Zotero.Utilities.randomString(32);
+  webSelections.set(ticket,{expires:now+10*60*1000,exact:exact.slice(0,20000),doi:normalizeDOI(doi),url:url.split("#")[0]});
+  return ticket;
+}
+class WebSelectionEndpoint {
+  supportedMethods=["POST","OPTIONS"];
+  supportedDataTypes=["application/json"];
+  permitBookmarklet=false;
+  async init(request:EndpointRequest) {
+    if(request.method==="OPTIONS")return jsonResponse(200,{ok:true});
+    if(requestHeader(request,"X-Paper-Bridge-Token")!==getOrCreatePairingToken())return jsonResponse(401,{ok:false,error:"配对码不正确"});
+    const body=(typeof request.data==="string"?JSON.parse(request.data):request.data) as any;
+    const entry=webSelections.get(body?.ticket);
+    if(!entry||entry.expires<Date.now())return jsonResponse(404,{ok:false,error:"网页定位请求已过期，请从PDF重新点击网页阅读"});
+    if(entry.doi ? normalizeDOI(body.doi)!==entry.doi : String(body.url||"").split("#")[0]!==entry.url)
+      return jsonResponse(409,{ok:false,error:"当前网页与PDF文献身份不符，未返回选中文字"});
+    return jsonResponse(200,{ok:true,exact:entry.exact});
+  }
+}
+
+class MutateAnnotationEndpoint {
+  supportedMethods = ["POST", "OPTIONS"];
+  supportedDataTypes = ["application/json"];
+  permitBookmarklet = false;
+  async init(request: EndpointRequest) {
+    if (request.method === "OPTIONS") return jsonResponse(200, {ok:true});
+    if (requestHeader(request,"X-Paper-Bridge-Token") !== getOrCreatePairingToken())
+      return jsonResponse(401,{ok:false,error:"配对码不正确"});
+    try {
+      const body = (typeof request.data === "string" ? JSON.parse(request.data) : request.data) as any;
+      if (!body || !["edit","delete"].includes(body.action) || !Number.isInteger(body.attachmentID) ||
+          typeof body.annotationKey !== "string" || typeof body.expectedComment !== "string" ||
+          (body.action === "edit" && (typeof body.comment !== "string" || body.comment.length > 50000)))
+        return jsonResponse(400,{ok:false,error:"批注修改参数无效"});
+      const attachment = Zotero.Items.get(body.attachmentID);
+      if (!attachment?.isPDFAttachment?.() || attachment.deleted)
+        return jsonResponse(404,{ok:false,error:"PDF附件不存在"});
+      const annotation = attachment.getAnnotations().find((item:any)=>item.key===body.annotationKey && !item.deleted);
+      if (!annotation) return jsonResponse(404,{ok:false,error:"批注不存在或已删除"});
+      if (!(Zotero.Libraries.get(attachment.libraryID) as any).editable || (annotation as any).annotationIsExternal)
+        return jsonResponse(403,{ok:false,error:"此批注不能编辑，请检查文库权限或嵌入PDF的批注"});
+      let conflict = false;
+      await Zotero.DB.executeTransaction(async () => {
+        if ((annotation.annotationComment || "") !== body.expectedComment) {conflict=true;return;}
+        if (body.action === "delete") annotation.deleted = true;
+        else {
+          // Accept plain text only; never execute or insert submitted HTML.
+          const escaped = body.comment.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+          annotation.annotationComment = escaped.split(/\r?\n/).map((line:string)=>`<p>${line || "<br>"}</p>`).join("");
+        }
+        await annotation.save();
+      });
+      if (conflict) return jsonResponse(409,{ok:false,error:"批注已在Zotero中改变，请刷新后再编辑"});
+      return jsonResponse(200,{ok:true,annotationKey:annotation.key});
+    } catch(error) {return jsonResponse(500,{ok:false,error:error instanceof Error?error.message:String(error)});}
+  }
+}
+
+class ArticleNotesEndpoint {
+  supportedMethods = ["POST", "OPTIONS"];
+  supportedDataTypes = ["application/json"];
+  permitBookmarklet = false;
+  async init(request: EndpointRequest) {
+    if (request.method === "OPTIONS") return jsonResponse(200,{ok:true});
+    if (requestHeader(request,"X-Paper-Bridge-Token") !== getOrCreatePairingToken())
+      return jsonResponse(401,{ok:false,error:"配对码不正确"});
+    try {
+      const body = (typeof request.data === "string" ? JSON.parse(request.data) : request.data) as any;
+      if (!body || !["list","save"].includes(body.action)) return jsonResponse(400,{ok:false,error:"笔记请求无效"});
+      const match = await findParentItem(body);
+      if (!match || match.item.deleted || !match.item.isRegularItem()) return jsonResponse(404,{ok:false,error:"请先将这篇文章添加到 Zotero"});
+      const parent=match.item, doi=normalizeDOI(body.document?.doi);
+      if (doi ? normalizeDOI(parent.getField("DOI"))!==doi : String(parent.getField("url"))!==body.document?.url)
+        return jsonResponse(409,{ok:false,error:"文章身份不一致，未操作笔记"});
+      if (match.candidateCount>1 && match.reason!=="selected-item")
+        return jsonResponse(409,{ok:false,error:"存在重复文献，请在 Zotero 中选中要保存笔记的条目"});
+      const identity={parentID:parent.id,libraryID:parent.libraryID,parentKey:parent.key};
+      const serialize=(note:any)=>({key:note.key,html:note.getNote(),title:note.getNoteTitle(),dateModified:note.dateModified});
+      if (body.action==="list") return jsonResponse(200,{ok:true,...identity,notes:parent.getNotes().map((id:number)=>Zotero.Items.get(id)).filter((n:any)=>n?.isNote()&&!n.deleted).map(serialize)});
+      if (body.parentID!==parent.id || body.libraryID!==parent.libraryID || body.parentKey!==parent.key)
+        return jsonResponse(409,{ok:false,error:"文献或文库已改变，请重新读取文章笔记；草稿仍保留"});
+      if (!(Zotero.Libraries.get(parent.libraryID) as any).editable) return jsonResponse(403,{ok:false,error:"此文库不可编辑"});
+      if (typeof body.title!=="string" || !body.title.trim() || body.title.length>300 || typeof body.text!=="string" || body.text.length>200000)
+        return jsonResponse(400,{ok:false,error:"请填写笔记标题，正文不能超过20万字"});
+      let note:any, conflict=false;
+      await Zotero.DB.executeTransaction(async()=>{
+        if (body.key) {
+          note=parent.getNotes().map((id:number)=>Zotero.Items.get(id)).find((n:any)=>n.key===body.key && !n.deleted);
+          if (!note || typeof body.expectedHTML!=="string" || note.getNote()!==body.expectedHTML) {conflict=true;return;}
+        } else {note=new Zotero.Item("note");note.libraryID=parent.libraryID;note.parentID=parent.id;}
+        const escape=(text:string)=>text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+        note.setNote(`<div data-schema-version="9"><h1>${escape(body.title.trim())}</h1>${body.text.split(/\r?\n/).map((line:string)=>`<p>${escape(line)||"<br>"}</p>`).join("")}</div>`);
+        await note.save();
+      });
+      if(conflict)return jsonResponse(409,{ok:false,error:"笔记已在 Zotero 中修改或删除，请重新读取后核对；草稿仍保留"});
+      return jsonResponse(200,{ok:true,...identity,note:serialize(note)});
+    } catch(error){return jsonResponse(500,{ok:false,error:error instanceof Error?error.message:String(error)});}
+  }
+}
+
 class AnnotationEndpoint {
   supportedMethods = ["POST", "OPTIONS"];
   supportedDataTypes = ["application/json"];
@@ -709,6 +862,10 @@ export function registerBridgeServer() {
   endpoints[PING_PATH] = PingEndpoint;
   endpoints[ANNOTATION_PATH] = AnnotationEndpoint;
   endpoints[LIST_ANNOTATIONS_PATH] = ListAnnotationsEndpoint;
+  endpoints["/paperbridge/article-notes"] = ArticleNotesEndpoint;
+  endpoints["/paperbridge/mutate-annotation"] = MutateAnnotationEndpoint;
+  endpoints["/paperbridge/web-selection"] = WebSelectionEndpoint;
+  endpoints["/paperbridge/import-document"] = ImportDocumentEndpoint;
   endpoints[OPEN_PATH] = OpenAnnotationEndpoint;
   endpoints[OPEN_DOCUMENT_PATH] = OpenDocumentEndpoint;
   endpoints[OPEN_SELECTION_PATH] = OpenSelectionEndpoint;
@@ -720,6 +877,11 @@ export function unregisterBridgeServer() {
   delete endpoints[PING_PATH];
   delete endpoints[ANNOTATION_PATH];
   delete endpoints[LIST_ANNOTATIONS_PATH];
+  delete endpoints["/paperbridge/article-notes"];
+  delete endpoints["/paperbridge/mutate-annotation"];
+  delete endpoints["/paperbridge/web-selection"];
+  delete endpoints["/paperbridge/import-document"];
+  webSelections.clear();
   delete endpoints[OPEN_PATH];
   delete endpoints[OPEN_DOCUMENT_PATH];
   delete endpoints[OPEN_SELECTION_PATH];

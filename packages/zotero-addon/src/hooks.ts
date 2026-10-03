@@ -5,6 +5,9 @@ import {
 } from "./modules/bridgeServer";
 import { registerReadingUI } from "./modules/readingUI";
 
+import { registerReaderUI } from "./modules/readerUI";
+let readerCleanup: (()=>void) | undefined;
+
 const windowCleanups = new Map<Window, () => void>();
 
 async function onStartup() {
@@ -16,6 +19,7 @@ async function onStartup() {
 
   getOrCreatePairingToken();
   registerBridgeServer();
+  readerCleanup = registerReaderUI();
   addon.api.getPairingToken = getOrCreatePairingToken;
 
   await Promise.all(
@@ -35,6 +39,7 @@ async function onMainWindowUnload(win: Window): Promise<void> {
 }
 
 function onShutdown(): void {
+  readerCleanup?.();
   unregisterBridgeServer();
   windowCleanups.forEach((cleanup) => cleanup());
   windowCleanups.clear();

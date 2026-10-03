@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {transform} from '../packages/zotero-addon/node_modules/esbuild/lib/main.js';
 const source=await readFile('packages/zotero-addon/src/modules/bridgeServer.ts','utf8');
-const code=(await transform(source.slice(source.indexOf('class ListAnnotationsEndpoint'),source.indexOf('class AnnotationEndpoint'))+'\nglobalThis.Endpoint=ListAnnotationsEndpoint;', {loader:'ts'})).code;
+const code=(await transform(source.slice(source.indexOf('class ListAnnotationsEndpoint'),source.indexOf('const importJobs ='))+'\nglobalThis.Endpoint=ListAnnotationsEndpoint;', {loader:'ts'})).code;
 function harness(doi='10.test/paper') {
   let lookups=0;
   const records={1:{id:1,isPDFAttachment:()=>true,getAnnotations:()=>[

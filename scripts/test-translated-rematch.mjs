@@ -136,3 +136,9 @@ test("cross-block mapping never returns partially recovered English", async () =
     /可靠/,
   );
 });
+
+test("partial phrases require complete sentences and never expand", async () => {
+  const h=harness();
+  for (const exact of ['心脏淋巴管','炎症','49个基因'])
+    await assert.rejects(h.mapTranslatedSelection({exact,paragraph:'衰老减少小鼠的心脏淋巴管并促进炎症。',originalParagraph:'Aging reduces cardiac lymphatic vessels in mice and promotes inflammation.',sentenceDiagnostic:{reason:'partial-sentence-boundary'}}), /完整句子/);
+});

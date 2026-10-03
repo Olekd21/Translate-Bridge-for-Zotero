@@ -49,6 +49,10 @@ try {
   Copy-Item -LiteralPath $installationGuide.FullName -Destination (Join-Path $bundleStage "START-HERE.html") -Force
   $manual = Join-Path $projectRoot "docs\用户手册.md"
   Copy-Item -LiteralPath $manual -Destination (Join-Path $bundleStage "USER-MANUAL.md") -Force
+  $validationReport = Join-Path $projectRoot "docs\VALIDATION-$extensionVersion.md"
+  if (Test-Path -LiteralPath $validationReport) {
+    Copy-Item -LiteralPath $validationReport -Destination $bundleStage -Force
+  }
 
   $bundleArchive = Join-Path $distributionRoot "translate-bridge-for-zotero-$extensionVersion.zip"
   Compress-Archive -Path (Join-Path $bundleStage "*") -DestinationPath $bundleArchive -CompressionLevel Optimal -Force

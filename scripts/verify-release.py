@@ -13,14 +13,17 @@ assert project['version'] == extension['version'] == addon['version'], 'Project,
 bundle = root / "dist" / f"translate-bridge-for-zotero-{extension['version']}.zip"
 folder = f"Translate-Bridge-Chrome-{extension['version']}/"
 xpi_name = f"Translate-Bridge-Zotero-{addon['version']}.xpi"
+validation_name = f"VALIDATION-{extension['version']}.md"
 
 with ZipFile(bundle) as z:
     assert z.testzip() is None
     names = {n.replace("\\", "/"): n for n in z.namelist()}
     assert all(not PurePosixPath(n).is_absolute() and ".." not in PurePosixPath(n).parts for n in names)
-    assert all(n.startswith(folder) or n in {xpi_name, "START-HERE.html", "USER-MANUAL.md"} for n in names), names
+    assert all(n.startswith(folder) or n in {xpi_name, "START-HERE.html", "USER-MANUAL.md", validation_name} for n in names), names
     assert not any(part in n.lower() for n in names for part in ["prefs.js", "auth.json", ".sqlite", ".env", "node_modules", "outbox"])
     read = lambda name: z.read(names[name])
+    if (root / "docs" / validation_name).exists():
+        assert read(validation_name) == (root / "docs" / validation_name).read_bytes()
     manifest = json.loads(read(folder + "manifest.json"))
     assert manifest == extension
     assert f'const currentVersion = "{extension["version"]}"' in read(folder + "content.js").decode()

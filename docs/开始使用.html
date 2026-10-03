@@ -117,13 +117,28 @@
   <body>
     <main>
       <header>
-        <div class="eyebrow">TRANSLATE BRIDGE FOR ZOTERO · 1.2.0</div>
+        <div class="eyebrow">TRANSLATE BRIDGE FOR ZOTERO · 1.4.5</div>
         <h1>三步开始使用</h1>
         <p class="lead">
           在论文网页中阅读和做笔记，并把高亮、中文翻译与个人笔记同步到 Zotero
           PDF 的对应原文位置。
         </p>
       </header>
+      <section>
+        <h2>1.4.5 更新：句子识别与报错区修复</h2>
+        <ul>
+          <li>“已有 Zotero 批注”和“文章工具”在页面首次加载时默认收起。</li>
+          <li>拖动侧栏左边缘调整宽度：默认 440px，桌面最小 400px；松开后自动记住。双击拖动柄恢复默认，左右方向键可微调。</li>
+          <li>侧栏最多占窗口宽度的 80%，且不超过 960px；窄窗口沿用全屏，恢复窗口后回到之前设置的宽度。</li>
+          <li>从 Zotero PDF 选区跳到网页时，也不会自动展开批注列表；点击标题可手动展开。</li>
+          <li>修复 Fig.、Eq.、e.g. 等缩写误断句，以及句后引用数字错误切分；保留真正句界和原始字符位置。</li>
+          <li>修复翻译器空标记、句尾引用和 Cre-negative 等词头跨句错位；独立文献引用不会拖累正文，未知正文不会被丢弃。</li>
+          <li>报错提示完整换行，诊断按钮改为同排小按钮；额外未匹配块会显示具体文字。普通诊断不包含正文。</li>
+        </ul>
+        <p>已验证诊断重建、英文句界、整篇 PDF 原生坐标及报错区布局；真实 Chrome 整页翻译 DOM 未全页逐句验收。验证记录见同包 VALIDATION-1.4.5.md。</p>
+        <p><strong>本次修复在 Chrome 扩展中。</strong>Zotero 已是 1.4.2 时可只更新 Chrome；完整包也提供同版 Zotero XPI，安装 XPI 后需重启 Zotero。重新加载 Chrome 扩展，将文章恢复英文并刷新后，再启用内置翻译。无需重新配对。</p>
+      </section>
+
       <section>
         <h2>先确认：只需安装 Translate Bridge for Zotero 两端</h2>
         <ul>
@@ -163,7 +178,7 @@
         <ol>
           <li>打开 Zotero，点击“工具 → 插件”。</li>
           <li>点击右上角齿轮，选择“从文件安装插件”。</li>
-          <li>选择 <code>Translate-Bridge-Zotero-1.2.0.xpi</code>。</li>
+          <li>选择 <code>Translate-Bridge-Zotero-1.4.5.xpi</code>。</li>
           <li>完全退出 Zotero，再重新打开。</li>
           <li>点击“工具 → Translate Bridge for Zotero → 复制配对码”。</li>
         </ol>
@@ -173,7 +188,7 @@
         <ol>
           <li>在 Chrome 地址栏打开 <code>chrome://extensions/</code>。</li>
           <li>开启右上角“开发者模式”，点击“加载已解压的扩展程序”。</li>
-          <li>选择整个 <code>Translate-Bridge-Chrome-1.2.0</code> 文件夹。</li>
+          <li>选择整个 <code>Translate-Bridge-Chrome-1.4.5</code> 文件夹。</li>
           <li>进入 Translate Bridge for Zotero 的“详情 → 扩展程序选项”。</li>
           <li>粘贴配对码，点击“保存并测试”。</li>
         </ol>
@@ -278,5 +293,5 @@
         只把批注发送到本机 Zotero；Chrome/Google 翻译的数据处理遵循其服务规则。
       </footer>
     </main>
-  <section style="max-width:960px;margin:24px auto;padding:24px"><h2>网页显示已有 Zotero 批注 · 1.2.0</h2><p>同时更新两端插件，打开 Zotero 并刷新论文网页。在译桥侧栏的“已有 Zotero 批注”中查看原文、备注与页码。可可靠定位的文字显示原色标记，点击即可查看笔记；无法定位的批注保留在侧栏。修改 Zotero 批注后点击“刷新批注”。此功能只读，不修改已有批注。</p><p>中文边界错位、重复文字和非文字批注不保证正文定位，可从侧栏跳回 Zotero。</p></section></body>
+  <section style="max-width:960px;margin:24px auto;padding:24px"><h2>网页显示已有 Zotero 批注 · 1.4.5</h2><p>同时更新两端插件，打开 Zotero 并刷新论文网页。在译桥侧栏的“已有 Zotero 批注”中查看原文、备注与页码。可可靠定位的文字显示原色标记，点击即可查看笔记；无法定位的批注保留在侧栏。修改 Zotero 批注后点击“刷新批注”。批注默认收起，展开后列表独立滚动；支持编辑评论和直接删除批注。文章笔记入口可不选正文就创建文献子笔记，本地保存草稿，手动写入 Zotero。</p><p>中文边界错位、重复文字和非文字批注不保证正文定位，可从侧栏跳回 Zotero。</p></section></body>
 </html>

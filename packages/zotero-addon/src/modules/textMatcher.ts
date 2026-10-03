@@ -3,6 +3,7 @@ export type TextQuoteSelector = {
   exact: string;
   prefix?: string;
   suffix?: string;
+  heading?: string;
 };
 
 export type PageMatch = {

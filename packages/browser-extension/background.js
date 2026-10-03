@@ -104,15 +104,39 @@ async function callZotero(path, body, requireToken = false) {
   }
 }
 
+let outboxWork = Promise.resolve();
+function withOutboxLock(action) {
+  const task = outboxWork.then(action, action);
+  outboxWork = task.catch(() => {});
+  return task;
+}
+async function identifiedOutbox() {
+  const {outbox} = await getSettings();
+  let changed = false;
+  for (const entry of outbox) if (!entry.queueID) {entry.queueID = crypto.randomUUID(); changed = true;}
+  if (changed) await chrome.storage.local.set({outbox});
+  return outbox;
+}
 async function enqueue(annotation, reason) {
-  const settings = await getSettings();
-  const outbox = [
-    ...settings.outbox,
-    { annotation, reason, queuedAt: new Date().toISOString() },
-  ].slice(-100);
-  await chrome.storage.local.set({ outbox });
-  await updateOutboxBadge(outbox.length);
-  return outbox.length;
+  return withOutboxLock(async () => {
+    const outbox = await identifiedOutbox();
+    outbox.push({queueID:crypto.randomUUID(), annotation, reason, queuedAt:new Date().toISOString()});
+    await chrome.storage.local.set({outbox});
+    await updateOutboxBadge(outbox.length);
+    return outbox.length;
+  });
+}
+async function manageOutbox(message) {
+  return withOutboxLock(async () => {
+    let outbox = await identifiedOutbox();
+    if (message.removeIDs) {
+      const ids = new Set(message.removeIDs);
+      outbox = outbox.filter(entry => !ids.has(entry.queueID));
+      await chrome.storage.local.set({outbox});
+    }
+    await updateOutboxBadge(outbox.length);
+    return {ok:true, entries:outbox};
+  });
 }
 
 async function syncAnnotation(annotation) {
@@ -140,25 +164,25 @@ async function syncAnnotation(annotation) {
 }
 
 async function retryOutbox() {
-  const settings = await getSettings();
-  const remaining = [];
+  const snapshot = await withOutboxLock(identifiedOutbox);
   let synced = 0;
-
-  for (const entry of settings.outbox) {
-    try {
-      await callZotero("/paperbridge/annotations", entry.annotation, true);
-      synced += 1;
-    } catch (error) {
-      remaining.push({
-        ...entry,
-        reason: error instanceof Error ? error.message : String(error),
-      });
-    }
+  for (const entry of snapshot) {
+    // Check membership and commit each result under the same queue lock. Newly
+    // enqueued entries are never overwritten by an old retry snapshot.
+    await withOutboxLock(async () => {
+      const current = await identifiedOutbox();
+      const live = current.find(item => item.queueID === entry.queueID);
+      if (!live) return;
+      try {
+        await callZotero("/paperbridge/annotations", live.annotation, true);
+        current.splice(current.indexOf(live),1); synced++;
+      } catch (error) { live.reason = error.message || String(error); }
+      await chrome.storage.local.set({outbox:current});
+      await updateOutboxBadge(current.length);
+    });
   }
-
-  await chrome.storage.local.set({ outbox: remaining });
-  await updateOutboxBadge(remaining.length);
-  return { ok: remaining.length === 0, synced, remaining: remaining.length };
+  const remaining = (await withOutboxLock(identifiedOutbox)).length;
+  return {ok:remaining===0,synced,remaining};
 }
 
 chrome.action.onClicked.addListener(async (tab) => {
@@ -191,8 +215,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     switch (message?.type) {
       case "paperbridge:sync":
         return syncAnnotation(message.annotation);
+      case "paperbridge:import-document":
+        return callZotero("/paperbridge/import-document", message.payload, true);
+      case "paperbridge:web-selection":
+        return callZotero("/paperbridge/web-selection", message.payload, true);
+      case "paperbridge:manage-outbox":
+        return manageOutbox(message);
+      case "paperbridge:settings":
+        await chrome.runtime.openOptionsPage(); return {ok:true};
+      case "paperbridge:mutate-annotation":
+        return callZotero("/paperbridge/mutate-annotation", message.payload, true);
       case "paperbridge:list-annotations":
         return callZotero("/paperbridge/list-annotations", message.locator, true);
+      case "paperbridge:article-notes":
+        return callZotero("/paperbridge/article-notes", message.payload, true);
       case "paperbridge:ping":
         return callZotero("/paperbridge/ping", {}, true);
       case "paperbridge:retry-outbox":

@@ -7,6 +7,38 @@ const word=(text,x=40,y=100)=>[x,y,x+text.length*3,y+10,10,1,0,0,0,0,0,0,0,text]
 const page=rows=>[600,800,[[[[0,0,0,0,rows.map((r,i)=>[[word(r,40,80+i*20)]])]]]]];
 const selector=exact=>({type:'TextQuoteSelector',exact});
 
+test('citation ranges inside sentences expand without changing experimental decimals',()=>{
+ const q='Pathway analysis used EnrichR50,51,52 and the Gene Ontology database.';
+ const d={pages:[page(['Pathway analysis used EnrichR50–52 and the Gene Ontology database.'])]};
+ assert.equal(locate(d,selector(q)).status,'unique');
+ assert.equal(locate(d,selector(q.replace('50,51,52','50,52'))).status,'not-found');
+ const exact='Mice were anesthetized with 2–2.5% isoflurane throughout the whole imaging procedure.';
+ assert.equal(locate({pages:[page([exact])]},selector(exact)).status,'unique');
+ assert.equal(locate({pages:[page([exact])]},selector(exact.replace('2.5','3.5'))).status,'not-found');
+});
+
+test('short cross-page sentence tails require edge geometry and retain digits',()=>{
+ const left='The samples were subjected to the clearing protocol using ascending concentrations of ethanol and subsequently maintained for one hour';
+ const upper=page(['at 4 °C.']),lower=[600,800,[[[[0,0,0,0,[[[word(left,40,730)]]]]]]]];
+ assert.equal(locate({pages:[lower,upper]},selector(left+' at 4 °C.')).status,'unique');
+ assert.equal(locate({pages:[lower,upper]},selector(left+' at 5 °C.')).status,'not-found');
+ const middle=[600,800,[[[[0,0,0,0,[[[word('at 4 °C.',40,400)]]]]]]]];
+ assert.equal(locate({pages:[lower,middle]},selector(left+' at 4 °C.')).status,'not-found');
+});
+
+test('identical caption sentences use the captured figure title, not a guessed page',()=>{
+ const q='Data are expressed as mean and error bars indicate standard error of the mean.';
+ const a='Extended Data Fig. 3 Cardiac hypertrophy is not affected by soluble VEGFR3 induction.';
+ const b='Extended Data Fig. 8 Cardiac hypertrophy is not affected by Vegfc induction.';
+ const data={pages:[page([a,q]),page([b,q])]};
+ assert.equal(locate(data,selector(q)).status,'ambiguous');
+ assert.equal(locate(data,{...selector(q),heading:a}).pageIndex,0);
+ assert.equal(locate(data,{...selector(q),heading:b}).pageIndex,1);
+ assert.equal(locate(data,{...selector(q),heading:'Unknown heading'}).status,'ambiguous');
+ assert.equal(locate(data,{...selector(q.replace('mean','median')),heading:b}).status,'not-found');
+ assert.equal(locate({pages:[page([a,q]),page([a,q])]}, {...selector(q),heading:a}).status,'ambiguous');
+});
+
 test('cross-page paragraph skips sparse figure labels, never intervening prose',()=>{
  const left='Lymphatic capillaries in all organs are composed of a monolayer of oak leaf shaped endothelial cells';
  const right='These cells form a continuous network supporting fluid balance and immune surveillance throughout the heart';
@@ -24,6 +56,17 @@ test('bounded medical spelling and reference range equivalents retain numeric co
  assert.equal(locate(data,selector(q)).status,'unique');
  assert.equal(locate(data,selector(q.replace('54,55,56','54,56'))).status,'not-found');
  assert.equal(locate(data,selector(q.replace('reduced','not reduced'))).status,'not-found');
+});
+
+test('large microscopy figure labels permit exact cross-page continuation, not dense tables or prose',()=>{
+ const left='The endothelial clusters were subclustered and the lymphatic cluster showed characteristic expression';
+ const right='of lymphatic markers in the heart while additional measurements confirmed the experimental findings';
+ const labels=[...Array(70).fill('Lymphatic vessel density'),'a','b','c','d','100 µm','P = 0.01','P = 0.02','P = 0.03','P = 0.04'];
+ const dense=rows=>[600,800,[[[[0,0,0,0,rows.map((r,i)=>[[word(r,40,100+i*6)]])]]]]];
+ const run=middle=>locate({pages:[page([left]),middle,page([right])]},selector(left+' '+right));
+ assert.equal(run(dense(labels)).status,'unique');
+ assert.equal(run(dense(labels.slice(0,70))).status,'not-found');
+ assert.equal(run(dense([...labels,'These substantial experimental results must remain part of the source text.'])).status,'not-found');
 });
 
 test('medical spelling compatibility does not relax gene names or experimental values',()=>{

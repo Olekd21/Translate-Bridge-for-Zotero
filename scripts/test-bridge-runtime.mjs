@@ -9,7 +9,7 @@ function backgroundHarness({token='test', status=200, pending=false, payload}={}
   const storage={pairingToken:token,outbox:[],reviewArchive:[]};
   const timers=new Map(); let counter=0, requests=0;
   const noop=()=>{};
-  const context=vm.createContext({AbortController,Error,Date,console,
+  const context=vm.createContext({AbortController,Error,Date,console,crypto:globalThis.crypto,
     setTimeout(fn){timers.set(++counter,fn);return counter;},clearTimeout(id){timers.delete(id);},
     chrome:{storage:{local:{async get(){return storage;},async set(data){Object.assign(storage,data);}}},
       action:{setBadgeBackgroundColor:noop,setBadgeText:noop,setTitle:noop,onClicked:{addListener:noop}},
@@ -84,3 +84,23 @@ for (const name of ['syncAnnotation','openSelectionInZotero']) {
     assert.equal(Boolean(h.state.syncing||h.state.locating),false);
   });
 }
+
+test('queue removal hides badge state and does not remove unseen new entries',async()=>{
+ const h=backgroundHarness();
+ await vm.runInContext('enqueue({id:"one"},"offline")',h.context);
+ const snapshot=await vm.runInContext('manageOutbox({})',h.context);
+ await vm.runInContext('enqueue({id:"two"},"offline")',h.context);
+ h.context.ids=[snapshot.entries[0].queueID];
+ const result=await vm.runInContext('manageOutbox({removeIDs:ids})',h.context);
+ assert.equal(result.entries.length,1);assert.equal(result.entries[0].annotation.id,'two');
+ h.context.ids=[result.entries[0].queueID];
+ assert.equal((await vm.runInContext('manageOutbox({removeIDs:ids})',h.context)).entries.length,0);
+ assert.equal(h.requests(),0);
+});
+
+test('parallel retry operations do not send an entry twice',async()=>{
+ const h=backgroundHarness({payload:{ok:true,nativePdfHighlightCreated:true}});
+ await vm.runInContext('enqueue({id:"one"},"offline")',h.context);
+ await vm.runInContext('Promise.all([retryOutbox(),retryOutbox()])',h.context);
+ assert.equal(h.requests(),1);assert.equal(h.storage.outbox.length,0);
+});

@@ -6,20 +6,18 @@
 
 [下载最新安装包](https://github.com/Olekd21/Translate-Bridge-for-Zotero/releases/latest) · [安装与用户手册](docs/用户手册.md) · [反馈问题](https://github.com/Olekd21/Translate-Bridge-for-Zotero/issues)
 
-## 1.2 版本更新（1.2.0）
+## 最新更新：1.4.5
 
-**新增：把 Zotero 中已有的批注带回论文网页。** 侧栏可查看原文、笔记、颜色与页码；能可靠定位的批注会在网页正文标记，点击即可查看。修改 Zotero 批注后，点击“刷新批注”。
+**中文句子识别修复、可拖宽侧栏、清晰的错误提示。**
 
-**重点修复与优化：**
+- 修复 `Fig.` 等缩写误断句、空翻译标记、句尾引用和 `Cre-negative` 等跨标记错位；完整段落恢复仍核对原文顺序与文字覆盖。
+- 侧栏左边缘可拖动调宽，桌面最小 400px，自动记住宽度；“已有 Zotero 批注”和“文章工具”默认收起。
+- 报错文字完整换行，诊断按钮紧凑排列；未知短正文不会被当作引用丢弃。
+- 相比 1.2.0，增加批注编辑/删除、文章笔记、待同步记录管理和 Zotero 阅读器跳转网页入口；翻译拆句时可确认采用完整英文原句范围。
 
-- **中文选句更稳**：改进 Chrome 翻译造成的跨句片段、克隆标记、引用数字和缓存失效处理；定位失败时再显示诊断，复制提示可自动恢复。
-- **PDF 长段落更稳**：支持部分跨页、跨栏及中间夹有稀疏图页的段落；修复断行与英美拼写兼容冲突、引用数字坐标偏移。科学数字、基因名和否定词仍严格核对。
-- **同步状态更清楚**：明确区分“已找回英文”与“已在 PDF 定位”，读取超时会提示原因；跨页批注保存失败时撤销本次已写入的部分。
-- **实际文库回归**：16 篇 PDF 抽样，859 个文本块实际执行定位；最近一轮修复额外找回12处，这12处均在隔离 Zotero 9/10 中成功保存。加密读取失败的两篇不计为通过。
+**从 1.2.0 升级，请同时更新 Chrome 扩展和 Zotero 插件到 1.4.5。** Zotero 安装后重启；Chrome 重新加载扩展后，将论文恢复英文、刷新，再开启翻译，重建原文句界。通常无需重新配对。已使用 Zotero 1.4.2+ 的用户可仅更新 Chrome。
 
-**升级必须同时更新 Chrome 扩展和 Zotero 插件到 1.2.0。** Zotero 安装 XPI 后完全退出再启动；Chrome 更新扩展后，将论文恢复英文、刷新页面，再开启整页翻译。通常无需重新配对。两端与总包的版本号一致。
-
-[查看完整更新与验证边界](docs/RELEASE-1.2.0.md) · [下载 1.2 完整安装包](https://github.com/Olekd21/Translate-Bridge-for-Zotero/releases/download/v1.2.0/translate-bridge-for-zotero-1.2.0.zip)
+[完整更新与验证边界](docs/RELEASE-1.4.5.md) · [下载 1.4.5 完整安装包](https://github.com/Olekd21/Translate-Bridge-for-Zotero/releases/download/v1.4.5/translate-bridge-for-zotero-1.4.5.zip) · [历史 1.2 更新](docs/RELEASE-1.2.0.md)
 
 ## 当前能力
 
@@ -35,13 +33,13 @@
 
 ## 安装
 
-在 Releases 下载 `translate-bridge-for-zotero-1.2.0.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
+在 Releases 下载 `translate-bridge-for-zotero-1.4.5.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
 
 需要同一电脑上的 Zotero 桌面版、Chrome 138+ 以及带文字层的论文 PDF。Zotero Connector 可选；不依赖 Better Notes、LLM-for-Zotero、Zotero PDF Translate、Style 或 Better BibTeX。详细步骤见 [用户手册](docs/用户手册.md)。分发产物位于 `dist/`：
 
-- `translate-bridge-chrome-1.2.0.zip`
-- `translate-bridge-zotero-1.2.0.xpi`
-- `translate-bridge-for-zotero-1.2.0.zip`（完整安装包）
+- `translate-bridge-chrome-1.4.5.zip`
+- `translate-bridge-zotero-1.4.5.xpi`
+- `translate-bridge-for-zotero-1.4.5.zip`（完整安装包）
 
 ## 从源码构建与验证
 
