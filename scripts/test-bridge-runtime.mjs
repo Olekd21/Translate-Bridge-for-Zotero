@@ -19,7 +19,7 @@ function backgroundHarness({token='test', status=200, pending=false, payload}={}
       if(pending) return new Promise((_,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted'))));
       return {ok:status===200,status,text:async()=>JSON.stringify(payload || {ok:status===200})};
     }});
-  vm.runInContext(background,context);
+  vm.runInContext(background.replace(/^import .*issue-store.*;$/m,''),context);
   return {context,storage,timers,requests:()=>requests};
 }
 
@@ -67,6 +67,7 @@ function uiHarness(functionName) {
     syncButton:{disabled:false},openSelectionButton:{disabled:false},noteNode:{value:'note'},
     isPdfAnchorReady:()=>true,selectionPayload:()=>({selector:{exact:state.anchor.exact}}),
     setStatus:(text)=>messages.push(text),
+    bridgeMessage:()=>{requests++;return new Promise(r=>{resolve=r;});},
     chrome:{runtime:{sendMessage:()=>{requests++;return new Promise(r=>{resolve=r;});}}}});
   vm.runInContext(source,context);
   return {state,messages,run:()=>vm.runInContext(`${functionName}()`,context),resolve:r=>resolve(r),requests:()=>requests};

@@ -8,7 +8,7 @@ async(page)=>{
  const select=async()=>{const r=document.createRange();r.setStart(s[0].firstChild,0);r.setEnd(s[0].firstChild,19);getSelection().removeAllRanges();getSelection().addRange(r);p.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));await wait();if(document.querySelector('.pb-panel').dataset.open!=='true')document.querySelector('.pb-selection-button').click();await wait();};
  let copy;Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async x=>copy=JSON.parse(x)}});
  await select();document.querySelector('.pb-boundary-details').click();await wait();
- let b=copy.blocks[0].boundary;if(!b.neighboringMarkers.length||!b.repairBlockers.includes('next-chinese-not-single-sentence'))throw Error('missing blocker');
+ let b=copy.blocks[0].boundary;if(!b.neighboringMarkers.length||!b.repairBlockers.includes('next-chinese-terminal-missing'))throw Error('missing blocker');
  document.querySelector('.pb-diagnostics').click();await wait();if(JSON.stringify(copy).includes('understudied')||copy.blocks[0].boundary)throw Error('ordinary diagnostic includes text');
  const old=s[0], clone=old.cloneNode(true);clone.dataset.pbSentence='unknown-key';old.replaceWith(clone);s[0]=clone;await select();
  document.querySelector('.pb-boundary-details').click();await wait();b=copy.blocks[0].boundary;

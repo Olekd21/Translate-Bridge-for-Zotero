@@ -68,7 +68,7 @@ async (page) => {
       const at = p.textContent.indexOf(selected);
       assert(at >= 0, 'selected text is absent from paragraph');
       const actual = await selectBetween(p, at, p, at + selected.length);
-      assert(actual === selected, `wrong DOM selection: ${actual}`);
+      assert(compactDisplay(actual) === compactDisplay(selected), `wrong DOM selection: ${actual}`);
     }
     function expectReady(english, chinese) {
       assert(!document.querySelector('.pb-open-selection').disabled, 'PDF opening is still disabled');

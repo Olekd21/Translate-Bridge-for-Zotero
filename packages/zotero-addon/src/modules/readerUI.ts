@@ -5,8 +5,28 @@ import { queueWebSelection } from "./bridgeServer";
 export function registerReaderUI() {
   const nodes = new Set<any>();
   const listeners: [string, (event:any)=>void][] = [];
-  const documents = new Map<any, any>();
   let stopped = false;
+  function pruneNodes() {
+    for (const node of nodes) if (!node.isConnected) nodes.delete(node);
+  }
+  async function openReaderArticle(reader:any, exact:string) {
+    const itemID = reader?.itemID ?? reader?._itemID ?? reader?._item?.id;
+    let attachment = itemID ? Zotero.Items.get(itemID) : reader?._item;
+    if (!attachment && itemID && typeof Zotero.Items.getAsync === "function")
+      attachment = await Zotero.Items.getAsync(itemID);
+    let item = attachment?.parentID ? Zotero.Items.get(attachment.parentID) : attachment;
+    if (!item && attachment?.parentID && typeof Zotero.Items.getAsync === "function")
+      item = await Zotero.Items.getAsync(attachment.parentID);
+    const url = articleURL(item);
+    if (!url) {
+      new ztoolkit.ProgressWindow(config.addonName)
+        .createLine({text:"此论文缺少网页地址或DOI，或条目尚未加载完成",type:"fail"})
+        .show().startCloseTimer(5000);
+      return;
+    }
+    const ticket = exact ? queueWebSelection(exact,String(item.getField("DOI")||""),url) : null;
+    Zotero.launchURL(ticket ? url.split("#")[0]+"#pb-web="+ticket : url);
+  }
   function buttonFor(reader:any, doc:any, exact = "") {
     const button = doc.createElement("button");
     button.type = "button";
@@ -28,13 +48,26 @@ export function registerReaderUI() {
     const label = doc.createElement("span"); label.textContent = "网页阅读";
     button.append(svg,label);
     button.style.cssText = "display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:none;width:auto;min-width:96px;height:32px;padding:3px 8px;border:1px solid rgba(8,123,255,.22);border-radius:6px;background:rgba(8,123,255,.07);color:inherit;font:inherit;font-size:12px;white-space:nowrap;cursor:pointer";
+    let opening = false;
+    let pointerActivation = 0;
+    const activate = async () => {
+      if (opening) return;
+      opening = true;
+      button.setAttribute("aria-busy", "true");
+      try { await openReaderArticle(reader,exact); }
+      finally { opening = false; button.setAttribute("aria-busy", "false"); }
+    };
+    // Reader toolbars can be rebuilt between pointerdown and click. Launch on
+    // pointerdown so one physical press is sufficient, and retain click for
+    // keyboard, assistive-technology and programmatic activation.
+    button.addEventListener("pointerdown", (event:any) => {
+      if (event.button !== 0) return;
+      pointerActivation = Date.now();
+      void activate();
+    });
     button.addEventListener("click", () => {
-      const attachment = Zotero.Items.get(reader.itemID);
-      const item = attachment?.parentID ? Zotero.Items.get(attachment.parentID) : attachment;
-      const url = articleURL(item);
-      if (!url) {new ztoolkit.ProgressWindow(config.addonName).createLine({text:"此论文缺少网页地址或DOI，请在条目信息中补充",type:"fail"}).show().startCloseTimer(5000);return;}
-      const ticket = exact ? queueWebSelection(exact,String(item.getField("DOI")||""),url) : null;
-      Zotero.launchURL(ticket ? url.split("#")[0]+"#pb-web="+ticket : url);
+      if (Date.now() - pointerActivation < 750) return;
+      void activate();
     });
     nodes.add(button);
     return button;
@@ -45,41 +78,24 @@ export function registerReaderUI() {
     if (!slot || doc.querySelector('[data-pb-reader-action="toolbar"]')) return;
     slot.append(buttonFor(reader,doc));
   }
-  function watch(reader:any, doc:any) {
-    if (!doc || stopped) return;
-    mountToolbar(reader,doc);
-    if (documents.has(doc) || !doc.defaultView?.MutationObserver || !doc.documentElement) return;
-    const observer = new doc.defaultView.MutationObserver(() => mountToolbar(reader,doc));
-    observer.observe(doc.documentElement,{childList:true,subtree:true});
-    documents.set(doc,observer);
-  }
   for (const type of ["renderToolbar", "renderTextSelectionPopup"]) {
     const handler = ({reader,doc,params,append}:any) => {
       if (stopped) return;
-      if (type === "renderToolbar") { watch(reader,doc); return; }
+      pruneNodes();
+      if (type === "renderToolbar") { mountToolbar(reader,doc); return; }
       const exact = String(params?.annotation?.text || "").trim();
       if (exact) append(buttonFor(reader,doc,exact));
     };
     (Zotero.Reader as any).registerEventListener(type,handler,config.addonID);
     listeners.push([type,handler]);
   }
-  const scan = () => {
-    const activeDocs = new Set<any>();
-    for (const reader of (Zotero.Reader as any)._readers || []) {
-      const doc = reader._iframeWindow?.document;
-      if (doc) {activeDocs.add(doc);watch(reader,doc);}
-    }
-    for (const [doc,observer] of documents) if (!activeDocs.has(doc)) {observer.disconnect();documents.delete(doc);}
-    for (const node of nodes) if (!node.isConnected) nodes.delete(node);
-  };
   // The toolbar may already exist when the add-on starts or is upgraded.
-  scan();
-  const timerWindow = Zotero.getMainWindow();
-  const timer = timerWindow.setInterval(scan, 1500);
+  for (const reader of (Zotero.Reader as any)._readers || []) {
+    const doc = reader._iframeWindow?.document;
+    if (doc) mountToolbar(reader,doc);
+  }
   return () => {
-    stopped = true; timerWindow.clearInterval(timer);
-    for (const observer of documents.values()) observer.disconnect();
-    documents.clear();
+    stopped = true;
     const readerAPI = Zotero.Reader as any;
     // Affected reader builds have an unregister filter that removes other
     // add-ons' listeners. Remove only these exact callback identities.

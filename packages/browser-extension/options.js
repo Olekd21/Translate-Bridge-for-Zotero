@@ -9,6 +9,21 @@ function setStatus(text, tone = "neutral") {
   statusNode.dataset.tone = tone;
 }
 
+const recordIssueButton = document.querySelector('#record-issue');
+recordIssueButton.onclick = async () => {
+  recordIssueButton.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({type:'paperbridge:record-issue',issue:{
+      version:chrome.runtime.getManifest().version,category:'settings',code:'settings-error',message:statusNode.textContent,
+      document:{title:'扩展设置'},selector:{},diagnostic:{stage:'settings',message:statusNode.textContent,tone:statusNode.dataset.tone},
+    }});
+    if (!response?.ok) throw Error(response?.error || '无法写入问题记录');
+    document.querySelector('#issue-capture-status').textContent = `已记入本机问题库（累计 ${response.occurrences} 次）`;
+  } catch (error) {
+    document.querySelector('#issue-capture-status').textContent = `问题未保存：${error.message}`;
+  } finally {recordIssueButton.disabled = false;}
+};
+
 async function load() {
   const { pairingToken = "", outbox = [] } = await chrome.storage.local.get({
     pairingToken: "",

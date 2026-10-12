@@ -1,3 +1,5 @@
+import { issueAction, openIssue, issueForTab } from './issue-store.js';
+
 const ZOTERO_BASE_URL = "http://127.0.0.1:23119";
 const DEFAULT_HEADERS = {
   "Content-Type": "application/json",
@@ -213,6 +215,21 @@ chrome.action.onClicked.addListener(async (tab) => {
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   const dispatch = async () => {
     switch (message?.type) {
+      case "paperbridge:record-issue":
+        return issueAction({action:'record',issue:message.issue});
+      case "paperbridge:issue-page":
+        await chrome.tabs.create({url:chrome.runtime.getURL('issues.html')}); return {ok:true};
+      case "paperbridge:issue-pending":
+        return issueForTab(_sender);
+      case "paperbridge:issue-review": {
+        const {record}=await issueForTab(_sender);
+        if (!record || record.id!==message.id) throw Error('当前网页没有对应的复核记录');
+        return issueAction({action:'update',id:record.id,patch:message.patch});
+      }
+      case "paperbridge:issues": {
+        if (!_sender.url?.startsWith(chrome.runtime.getURL(''))) throw Error('请从插件的问题记录页面操作');
+        return message.action==='open'?openIssue(message.id):issueAction(message);
+      }
       case "paperbridge:sync":
         return syncAnnotation(message.annotation);
       case "paperbridge:import-document":
@@ -257,4 +274,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       });
     });
   return true;
+});
+
+chrome.tabs?.onRemoved?.addListener(tabId => {
+  void chrome.storage.session.remove(`paperbridgeIssueTab:${tabId}`);
 });

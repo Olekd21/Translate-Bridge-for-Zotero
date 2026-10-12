@@ -1,13 +1,13 @@
 {
   "name": "paper-bridge",
-  "version": "1.4.5",
+  "version": "1.5.5",
   "private": true,
   "type": "module",
   "workspaces": [
     "packages/matcher"
   ],
   "scripts": {
-    "test": "npm run test --workspace @paper-bridge/matcher && npm run test:geometry && npm run test:full-pdf && npm run test:source-fetch && npm run test:reading-ui && npm run test:bridge-runtime",
+    "test": "npm run test --workspace @paper-bridge/matcher && npm run test:geometry && npm run test:full-pdf && npm run test:source-fetch && npm run test:reading-ui && npm run test:bridge-runtime && npm run test:issues",
     "test:bridge-runtime": "node --test scripts/test-bridge-runtime.mjs scripts/test-annotation-management.mjs scripts/test-list-annotations.mjs scripts/test-nonadjacent-save.mjs scripts/test-reader-web-ui.mjs",
     "test:full-pdf": "node --test scripts/test-full-pdf.mjs",
     "test:reading-ui": "node --test scripts/test-reading-ui.mjs",
@@ -16,6 +16,7 @@
     "match:sample": "npm run match:sample --workspace @paper-bridge/matcher",
     "build:zotero": "npm run build --prefix packages/zotero-addon",
     "check:extension": "node scripts/check-extension.mjs",
-    "build:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1"
+    "build:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-release.ps1",
+    "test:issues": "node --test scripts/test-issue-store.mjs"
   }
 }

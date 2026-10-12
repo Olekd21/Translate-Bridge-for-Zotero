@@ -6,18 +6,18 @@
 
 [下载最新安装包](https://github.com/Olekd21/Translate-Bridge-for-Zotero/releases/latest) · [安装与用户手册](docs/用户手册.md) · [反馈问题](https://github.com/Olekd21/Translate-Bridge-for-Zotero/issues)
 
-## 最新更新：1.4.5
+## 最新更新：1.5.5
 
-**中文句子识别修复、可拖宽侧栏、清晰的错误提示。**
+**改进 Google 翻译句子对应、阅读稳定性，并加入手动本地问题记录。**
 
-- 修复 `Fig.` 等缩写误断句、空翻译标记、句尾引用和 `Cre-negative` 等跨标记错位；完整段落恢复仍核对原文顺序与文字覆盖。
-- 侧栏左边缘可拖动调宽，桌面最小 400px，自动记住宽度；“已有 Zotero 批注”和“文章工具”默认收起。
-- 报错文字完整换行，诊断按钮紧凑排列；未知短正文不会被当作引用丢弃。
-- 相比 1.2.0，增加批注编辑/删除、文章笔记、待同步记录管理和 Zotero 阅读器跳转网页入口；翻译拆句时可确认采用完整英文原句范围。
+- 使用翻译前不可变英文快照，统一句界与 DOM 字符位置；整句容器减少引用、上下标附近的跨句错位，修复句末引用和厂家缩写误断句。继续使用 Chrome 内置 Google 翻译。
+- 降低无关页面更新导致的重复扫描和批注请求，保留稳定高亮；改进 Zotero 网页阅读按钮的点击响应。
+- 只有主动点击“记录当前问题”才在本地保存错误代码、定位诊断和选区，无需填写原因。支持导出、回访原位置及人工标记复核结果。
+- 对 VEGF-C/VEGFR-3 压力超负荷论文的实际 Google 译文，48 段、364 中文选句完成验证：348 句直接对应英文，16 句须明确确认采用完整英文长句；MV3 侧栏回放 412/412 通过。不能将这 16 句算作逐个中文分句直接对齐。
 
-**从 1.2.0 升级，请同时更新 Chrome 扩展和 Zotero 插件到 1.4.5。** Zotero 安装后重启；Chrome 重新加载扩展后，将论文恢复英文、刷新，再开启翻译，重建原文句界。通常无需重新配对。已使用 Zotero 1.4.2+ 的用户可仅更新 Chrome。
+**从 GitHub 1.4.5 或更早版本升级，建议同时更新 Chrome 和 Zotero 到 1.5.5。** 本地已使用 1.5.4 的用户此次仅需更新 Chrome。用新文件覆盖原扩展目录，再点击“重新加载”，不要卸载；旧论文须恢复英文、刷新、重新开启翻译。整句容器可能让文本比原页面更频繁换行。
 
-[完整更新与验证边界](docs/RELEASE-1.4.5.md) · [下载 1.4.5 完整安装包](https://github.com/Olekd21/Translate-Bridge-for-Zotero/releases/download/v1.4.5/translate-bridge-for-zotero-1.4.5.zip) · [历史 1.2 更新](docs/RELEASE-1.2.0.md)
+[更新说明](docs/RELEASE-1.5.5.md) · [验证范围](docs/VALIDATION-1.5.5.md) · [下载 1.5.5 完整安装包](https://github.com/Olekd21/Translate-Bridge-for-Zotero/releases/download/v1.5.5/translate-bridge-for-zotero-1.5.5.zip) · [历史 1.4.5 更新](docs/RELEASE-1.4.5.md)
 
 ## 当前能力
 
@@ -33,13 +33,13 @@
 
 ## 安装
 
-在 Releases 下载 `translate-bridge-for-zotero-1.4.5.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
+在 Releases 下载 `translate-bridge-for-zotero-1.5.5.zip`，解压后打开 `START-HERE.html`。先安装 Zotero 端，再在 Chrome 加载扩展，复制配对码并保存测试。GitHub 自动生成的 Source code ZIP 是源码，请选择完整安装包。
 
 需要同一电脑上的 Zotero 桌面版、Chrome 138+ 以及带文字层的论文 PDF。Zotero Connector 可选；不依赖 Better Notes、LLM-for-Zotero、Zotero PDF Translate、Style 或 Better BibTeX。详细步骤见 [用户手册](docs/用户手册.md)。分发产物位于 `dist/`：
 
-- `translate-bridge-chrome-1.4.5.zip`
-- `translate-bridge-zotero-1.4.5.xpi`
-- `translate-bridge-for-zotero-1.4.5.zip`（完整安装包）
+- `translate-bridge-chrome-1.5.5.zip`
+- `translate-bridge-zotero-1.5.5.xpi`
+- `translate-bridge-for-zotero-1.5.5.zip`（完整安装包）
 
 ## 从源码构建与验证
 

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>问题记录 · Translate Bridge</title><link rel="stylesheet" href="options.css"><link rel="stylesheet" href="issues.css"></head>
+<body><main>
+  <header><p class="kicker">Translate Bridge · 本机问题库</p><h1>问题记录与复核</h1>
+    <p>在文章侧栏点击“记录当前问题”，即可保存当前错误、选区和定位诊断，无需填写原因。只有主动点击才记录，数据保存在本机。</p>
+    <p class="field-help">导出文件包含论文网址、所选文字及诊断。在原目录更新会保留记录；改换加载目录、卸载或清除浏览器数据前请导出备份。</p>
+  </header>
+  <section class="issue-toolbar">
+    <div class="actions"><button id="export-issues" class="primary">导出全部记录</button><button id="import-issues">导入记录</button><input id="issue-file" type="file" accept=".json,application/json" hidden><a href="options.html">扩展设置</a></div>
+    <div class="issue-filters"><label>筛选状态<select id="issue-filter"><option value="all">全部</option><option value="pending">待复核</option><option value="unresolved">仍有问题</option><option value="resolved">已解决</option><option value="ignored">暂不处理</option></select></label><label>搜索<input id="issue-search" type="search" placeholder="标题、DOI、选区或错误"></label></div>
+    <p><button id="refresh-issues" type="button">刷新列表</button> <button id="import-example" type="button">导入本次 Nature 1.5.2 问题</button></p>
+    <p id="issue-status" role="status">正在读取…</p>
+  </section>
+  <section id="issue-list" aria-label="问题记录"></section>
+</main><script src="issues.js"></script></body></html>

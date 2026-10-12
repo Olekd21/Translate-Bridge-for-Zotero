@@ -16,7 +16,11 @@ const source = await fs.readFile(sourcePath, "utf8");
 const start = source.indexOf("  function englishSentenceSegments(");
 const end = source.indexOf("  function preserveSentenceBoundaries(", start);
 assert.ok(start >= 0 && end > start, "actual English segmentation function was not found");
-const context = vm.createContext({ Intl });
+const context = vm.createContext({
+  Intl,
+  sourceParagraphByKey: new Map(),
+  normalizedReadableText: value => String(value || "").replace(/\s+/g, " ").trim(),
+});
 vm.runInContext(source.slice(start, end), context);
 console.log(JSON.stringify({
   fixture: "english-sentence-segmentation",
@@ -176,6 +180,11 @@ const cases = [
     expected: ["Expression increased.12", "The control remained unchanged."],
   },
   {
+    name: "superscript-style citation separated from the period by whitespace stays with its sentence",
+    raw: "Expression increased. 12,13 The control remained unchanged.",
+    expected: ["Expression increased. 12,13", "The control remained unchanged."],
+  },
+  {
     name: "bracketed citation after a period stays attached to the preceding sentence",
     raw: "Expression increased.[12,13] The control remained unchanged.",
     expected: ["Expression increased.[12,13]", "The control remained unchanged."],
@@ -184,6 +193,28 @@ const cases = [
     name: "figure reference plus terminal citation does not create an extra fragment",
     raw: "The marker increased (Fig. 4).12 The control remained unchanged.",
     expected: ["The marker increased (Fig. 4).12", "The control remained unchanged."],
+  },
+  {
+    name: "citation after an embryonic decimal timepoint starts the next sentence",
+    raw: "Cardiac lymphatics populate the dorsal ventricle by E14.5.13 The nascent lymphatics then sprout from the sinus venosus region.14 By E18.5, the network is established.13",
+    expected: [
+      "Cardiac lymphatics populate the dorsal ventricle by E14.5.13",
+      "The nascent lymphatics then sprout from the sinus venosus region.14",
+      "By E18.5, the network is established.13",
+    ],
+  },
+  {
+    name: "a bare decimal followed by a capitalized continuation is not reclassified as a citation",
+    raw: "The recorded value was 1.25 The source table omitted its unit.",
+    expected: ["The recorded value was 1.25 The source table omitted its unit."],
+  },
+  {
+    name: "an appendix outline label is not reclassified as a numeric citation boundary",
+    raw: "B.6 Alternative Splicing The data set contains four tissue types. Each target contains four softmax units.",
+    expected: [
+      "B.6 Alternative Splicing The data set contains four tissue types.",
+      "Each target contains four softmax units.",
+    ],
   },
   {
     name: "UTF-16 offsets survive astral symbols, Greek text and decimal values",
@@ -224,3 +255,62 @@ for (const example of cases) {
 test("empty source returns no sentence and preserves empty coverage", () => {
   assert.deepEqual(checkedSegments(""), []);
 });
+
+test("stable sentence ordinal resolves the correct repeated source sentence", () => {
+  const paragraph = "Expression increased. Expression increased. Controls remained stable.";
+  const first = context.sentenceSourceBounds({text:"Expression increased.",sentenceIndex:0}, paragraph);
+  const second = context.sentenceSourceBounds({text:"Expression increased.",sentenceIndex:1}, paragraph);
+  assert.deepEqual({...first}, {start:0,end:21});
+  assert.deepEqual({...second}, {start:22,end:43});
+});
+
+test("legacy records still fail closed when repeated source text has no ordinal", () => {
+  const paragraph = "Expression increased. Expression increased.";
+  assert.equal(context.sentenceSourceBounds({text:"Expression increased."}, paragraph), null);
+});
+
+test("numeric citation suffixes are terminal while bare decimal values are not", () => {
+  assert.equal(context.englishSentenceEndsAtTerminal("The network is established.13"), true);
+  assert.equal(context.englishSentenceEndsAtTerminal("The network is established.[13–15]"), true);
+  assert.equal(context.englishSentenceEndsAtTerminal("The embryo was assessed at E14.5.13"), true);
+  assert.equal(context.englishSentenceEndsAtTerminal("The embryo was assessed at E14.5"), false);
+  assert.equal(context.englishSentenceEndsAtTerminal("The measured value was 1.25"), false);
+  assert.equal(context.englishSentenceEndsAtTerminal("Appendix B.6"), false);
+});
+
+
+test("a cached sentence ending with references stays one sentence when inspected alone", () => {
+  for (const text of ["Function remained stable. 6 , 7", "Expression increased.[12–15]", "The network forms by E18.5.13"]) {
+    assert.equal(context.englishSentenceSegments(text).length, 1, text);
+  }
+});
+
+test("normalized source offsets recover exact DOM ranges across reference newlines and UTF-16 symbols", () => {
+  const from = source.indexOf("  function normalizedReadableText(");
+  const to = source.indexOf("  function looksPrimarilyEnglish(", from);
+  const offsets = vm.createContext({});
+  vm.runInContext(source.slice(from, to), offsets);
+  const samples = [
+    "  Cardiac function remained stable.\n6\n, \n7\n Next sentence.  ",
+    "Gene VEGF-C\u00a0156S remained stable.\r\nReference 12.",
+    "Cells 🧬 retain α-SMA+ and VEGFR-3f/−. Second sentence.",
+    "Expression <sup> + </sup> changed.&nbsp;Controls remained stable.",
+  ];
+  for (const raw of samples) {
+    const p = offsets.readableTextProjection(raw);
+    assert.equal(p.text, offsets.normalizedReadableText(raw));
+    assert.equal(p.starts.length, p.text.length);
+    assert.equal(p.ends.length, p.text.length);
+    for (const part of context.englishSentenceSegments(p.text)) {
+      const start = part.index + part.segment.length - part.segment.trimStart().length;
+      const end = part.index + part.segment.trimEnd().length;
+      assert.equal(offsets.normalizedReadableText(raw.slice(p.starts[start], p.ends[end - 1])), part.segment.trim());
+    }
+  }
+});
+
+for (const [name, raw, expected] of [
+  ['company suffix before dilution', 'Secondary antibodies were purchased from Sino Biological Inc. (1:2000). Controls remained stable.', ['Secondary antibodies were purchased from Sino Biological Inc. (1:2000).', 'Controls remained stable.']],
+  ['company suffix before supplier address', 'Reagents came from Example Ltd. (Cambridge, UK). Controls remained stable.', ['Reagents came from Example Ltd. (Cambridge, UK).', 'Controls remained stable.']],
+  ['company suffix at a real sentence end', 'Reagents came from Example Inc. Controls remained stable.', ['Reagents came from Example Inc.', 'Controls remained stable.']],
+]) test(name, () => assert.deepEqual(checkedSegments(raw), expected));

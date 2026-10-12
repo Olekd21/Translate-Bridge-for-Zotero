@@ -31,6 +31,21 @@ export function registerReadingUI(win: _ZoteroTypes.MainWindow): () => void {
     node.addEventListener(event, callback);
     listeners.push(() => node.removeEventListener(event, callback));
   };
+  const onActivation = (node: EventTarget, action: () => void) => {
+    let lastType = "";
+    let lastAt = 0;
+    const activate = (event: Event) => {
+      const now = Date.now();
+      // XUL toolbar buttons may emit both click and command for one gesture.
+      // Accept either event, but suppress only the paired event of the other type.
+      if (lastType && event.type !== lastType && now - lastAt < 500) return;
+      lastType = event.type;
+      lastAt = now;
+      action();
+    };
+    on(node, "command", activate);
+    on(node, "click", activate);
+  };
   const selected = () => {
     const items = win.ZoteroPane.getSelectedItems();
     if (items.length !== 1) return null;
@@ -160,8 +175,8 @@ export function registerReadingUI(win: _ZoteroTypes.MainWindow): () => void {
     help.setAttribute("tooltiptext", "Translate Bridge for Zotero：开始使用、配对和依赖说明");
     help.setAttribute("aria-label", "Translate Bridge for Zotero 使用指南");
     help.setAttribute("tabindex", "0");
-    on(read, "command", openArticle);
-    on(help, "command", openGuide);
+    onActivation(read, openArticle);
+    onActivation(help, openGuide);
     group.append(read, help);
     toolbar.appendChild(group);
     owned.push(group);

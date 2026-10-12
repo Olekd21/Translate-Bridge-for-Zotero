@@ -155,6 +155,13 @@ test("empty and multiple selection give guidance; attached PDF opens its parent 
   h.command("paperbridge-toolbar-read");
   assert.deepEqual(h.urls, ["https://example.org/paper"]);
 });
+test("toolbar click fallback opens once when XUL also emits command", () => {
+  const h = setup();
+  h.select([h.parent]);
+  h.find("paperbridge-toolbar-read").dispatchEvent(new Event("click"));
+  h.command("paperbridge-toolbar-read");
+  assert.deepEqual(h.urls, ["https://example.org/paper"]);
+});
 test("missing metadata explains how to repair it instead of silently doing nothing", () => {
   const h = setup();
   h.select([{ getField: () => "" }]);

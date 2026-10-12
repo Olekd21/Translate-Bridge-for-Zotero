@@ -687,3 +687,12 @@
 #paper-bridge-root .pb-scope-notice { margin-top: 10px; padding: 8px; border-radius: 6px; background: #edf5ff; font-size: 12px; line-height: 1.5; }
 #paper-bridge-root .pb-scope-notice summary { font-weight: 600; cursor: pointer; }
 #paper-bridge-root .pb-scope-notice p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Local issue collection and explicit verification controls. */
+#paper-bridge-root .pb-issue-actions{display:flex;gap:8px;flex-wrap:wrap;padding-top:8px;align-items:center}
+#paper-bridge-root .pb-issue-actions button{font-size:12px;padding:5px 9px;border:1px solid #d8e0ea;border-radius:8px;background:#f7f9fc;color:#366186;cursor:pointer}
+#paper-bridge-root .pb-issue-capture-status{flex-basis:100%;font-size:12px;color:#52667a;overflow-wrap:anywhere}
+#paper-bridge-root .pb-issue-review{padding:12px;border:1px solid #b9d5ef;background:#f2f8ff;border-radius:10px;margin-bottom:10px;color:#263a4c}
+#paper-bridge-root .pb-issue-review p{margin:8px 0;font-size:12px;line-height:1.5;max-height:100px;overflow:auto}
+#paper-bridge-root .pb-issue-review>div{display:flex;flex-wrap:wrap;gap:6px}
+#paper-bridge-root .pb-issue-review button{padding:5px 8px;font-size:12px;border:1px solid #bfd1e2;border-radius:6px;cursor:pointer}
+#paper-bridge-root .pb-issue-review textarea{box-sizing:border-box;width:100%;height:52px;min-height:40px;border:1px solid #bfd1e2;border-radius:6px;margin-top:8px;padding:8px;font:inherit}

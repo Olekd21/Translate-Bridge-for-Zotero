@@ -1,0 +1,257 @@
+{
+  "format": "translate-bridge-issues",
+  "schemaVersion": 1,
+  "records": [
+    {
+      "id": "reported-nature-152-20261010",
+      "occurrences": 1,
+      "status": "pending",
+      "note": "从本次用户诊断导入；首次/最近时间为导入时间，原错误发生时刻未提供。先启用 Google 中文翻译再查找原选区。",
+      "reviews": [],
+      "first": {
+        "version": "1.5.2",
+        "category": "mapping",
+        "code": "invalid-sentence-fragment-groups",
+        "message": "句子标记存在，但当前段落未关联英文快照；用户提交的原始诊断。",
+        "document": {
+          "url": "https://www.nature.com/articles/s41586-020-2998-x",
+          "doi": "10.1038/s41586-020-2998-x",
+          "title": "Nature · RELN 贴片段落（用户报告）"
+        },
+        "selector": {
+          "exact": "我们利用成熟的生物工程胶原蛋白贴片 28,29 作为支架，将重组RELN蛋白递送至心脏。 在急性心肌梗死后立即将含有RELN的贴片和对照贴片缝合到约两个月大的受损心脏上（图4e，f）。 每周评估心脏功能（心肌梗死后1-6周），心肌梗死后21天，RELN贴片组小鼠的射血分数显著提高（图4g）。 与心脏功能的改善相一致，心肌梗死后42天，RELN贴片组小鼠梗死区域的纤维化瘢痕面积显著缩小（图4h）。",
+          "paragraph": "",
+          "prefix": "",
+          "suffix": "",
+          "english": "",
+          "containerId": "",
+          "sectionHeading": ""
+        },
+        "diagnostic": {
+          "version": "1.5.2",
+          "doi": "10.1038/s41586-020-2998-x",
+          "selectedCharacters": 199,
+          "language": "zh",
+          "originalSelectionLanguage": "zh",
+          "mappingMethod": null,
+          "selectionIssue": null,
+          "excludedReferenceBlocks": 0,
+          "blocks": [
+            {
+              "selectedCharacters": 199,
+              "paragraphCharacters": 502,
+              "sentenceAnchors": 9,
+              "physicalSentenceFragments": 13,
+              "sourceSentenceAnchors": 0,
+              "hasEnglishParagraph": false,
+              "reason": "invalid-sentence-fragment-groups",
+              "elementTag": "p",
+              "elementRole": null,
+              "selectedText": "我们利用成熟的生物工程胶原蛋白贴片 28,29 作为支架，将重组RELN蛋白递送至心脏。 在急性心肌梗死后立即将含有RELN的贴片和对照贴片缝合到约两个月大的受损心脏上（图4e，f）。 每周评估心脏功能（心肌梗死后1-6周），心肌梗死后21天，RELN贴片组小鼠的射血分数显著提高（图4g）。 与心脏功能的改善相一致，心肌梗死后42天，RELN贴片组小鼠梗死区域的纤维化瘢痕面积显著缩小（图4h）。",
+              "boundary": {
+                "repairBlockers": [
+                  "current-cache-invalid",
+                  "next-cache-invalid",
+                  "next-english-not-single-sentence",
+                  "current-english-not-single-sentence"
+                ],
+                "neighboringMarkers": [
+                  {
+                    "marker": "192",
+                    "chinese": "接下来，我们评估了将RELN直接递送至心脏是否能改善成年野生型小鼠心肌梗死后的心脏修复。",
+                    "english": "",
+                    "cacheValid": false,
+                    "groupFailure": null,
+                    "keyExists": true,
+                    "sameOwner": false,
+                    "ownerConnected": true,
+                    "sameUrl": true,
+                    "paragraphId": "p59",
+                    "copiesInParagraph": 1,
+                    "logicalFragments": 1,
+                    "englishSentences": null,
+                    "chineseStops": 1,
+                    "nestedMarkers": 0
+                  },
+                  {
+                    "marker": "193",
+                    "chinese": "我们利用成熟的生物工程胶原蛋白贴片 28,29 作为支架，将重组RELN蛋白递送至心脏。",
+                    "english": "",
+                    "cacheValid": false,
+                    "groupFailure": null,
+                    "keyExists": true,
+                    "sameOwner": false,
+                    "ownerConnected": true,
+                    "sameUrl": true,
+                    "paragraphId": "p59",
+                    "copiesInParagraph": 1,
+                    "logicalFragments": 1,
+                    "englishSentences": null,
+                    "chineseStops": 1,
+                    "nestedMarkers": 0
+                  },
+                  {
+                    "marker": "194",
+                    "chinese": "在急性心肌梗死后立即将含有RELN的贴片和对照贴片缝合到约两个月大的受损心脏上（图4e，f）。",
+                    "english": "",
+                    "cacheValid": false,
+                    "groupFailure": null,
+                    "keyExists": true,
+                    "sameOwner": false,
+                    "ownerConnected": true,
+                    "sameUrl": true,
+                    "paragraphId": "p59",
+                    "copiesInParagraph": 1,
+                    "logicalFragments": 1,
+                    "englishSentences": null,
+                    "chineseStops": 1,
+                    "nestedMarkers": 0
+                  },
+                  {
+                    "marker": "195",
+                    "chinese": "每周评估心脏功能（心肌梗死后1-6周），心肌梗死后21天，RELN贴片组小鼠的射血分数显著提高（图4g）。",
+                    "english": "",
+                    "cacheValid": false,
+                    "groupFailure": null,
+                    "keyExists": true,
+                    "sameOwner": false,
+                    "ownerConnected": true,
+                    "sameUrl": true,
+                    "paragraphId": "p59",
+                    "copiesInParagraph": 1,
+                    "logicalFragments": 1,
+                    "englishSentences": null,
+                    "chineseStops": 1,
+                    "nestedMarkers": 0
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      },
+      "latest": {
+        "version": "1.5.2",
+        "category": "mapping",
+        "code": "invalid-sentence-fragment-groups",
+        "message": "句子标记存在，但当前段落未关联英文快照；用户提交的原始诊断。",
+        "document": {
+          "url": "https://www.nature.com/articles/s41586-020-2998-x",
+          "doi": "10.1038/s41586-020-2998-x",
+          "title": "Nature · RELN 贴片段落（用户报告）"
+        },
+        "selector": {
+          "exact": "我们利用成熟的生物工程胶原蛋白贴片 28,29 作为支架，将重组RELN蛋白递送至心脏。 在急性心肌梗死后立即将含有RELN的贴片和对照贴片缝合到约两个月大的受损心脏上（图4e，f）。 每周评估心脏功能（心肌梗死后1-6周），心肌梗死后21天，RELN贴片组小鼠的射血分数显著提高（图4g）。 与心脏功能的改善相一致，心肌梗死后42天，RELN贴片组小鼠梗死区域的纤维化瘢痕面积显著缩小（图4h）。",
+          "paragraph": "",
+          "prefix": "",
+          "suffix": "",
+          "english": "",
+          "containerId": "",
+          "sectionHeading": ""
+        },
+        "diagnostic": {
+          "version": "1.5.2",
+          "doi": "10.1038/s41586-020-2998-x",
+          "selectedCharacters": 199,
+          "language": "zh",
+          "originalSelectionLanguage": "zh",
+          "mappingMethod": null,
+          "selectionIssue": null,
+          "excludedReferenceBlocks": 0,
+          "blocks": [
+            {
+              "selectedCharacters": 199,
+              "paragraphCharacters": 502,
+              "sentenceAnchors": 9,
+              "physicalSentenceFragments": 13,
+              "sourceSentenceAnchors": 0,
+              "hasEnglishParagraph": false,
+              "reason": "invalid-sentence-fragment-groups",
+              "elementTag": "p",
+              "elementRole": null,
+              "selectedText": "我们利用成熟的生物工程胶原蛋白贴片 28,29 作为支架，将重组RELN蛋白递送至心脏。 在急性心肌梗死后立即将含有RELN的贴片和对照贴片缝合到约两个月大的受损心脏上（图4e，f）。 每周评估心脏功能（心肌梗死后1-6周），心肌梗死后21天，RELN贴片组小鼠的射血分数显著提高（图4g）。 与心脏功能的改善相一致，心肌梗死后42天，RELN贴片组小鼠梗死区域的纤维化瘢痕面积显著缩小（图4h）。",
+              "boundary": {
+                "repairBlockers": [
+                  "current-cache-invalid",
+                  "next-cache-invalid",
+                  "next-english-not-single-sentence",
+                  "current-english-not-single-sentence"
+                ],
+                "neighboringMarkers": [
+                  {
+                    "marker": "192",
+                    "chinese": "接下来，我们评估了将RELN直接递送至心脏是否能改善成年野生型小鼠心肌梗死后的心脏修复。",
+                    "english": "",
+                    "cacheValid": false,
+                    "groupFailure": null,
+                    "keyExists": true,
+                    "sameOwner": false,
+                    "ownerConnected": true,
+                    "sameUrl": true,
+                    "paragraphId": "p59",
+                    "copiesInParagraph": 1,
+                    "logicalFragments": 1,
+                    "englishSentences": null,
+                    "chineseStops": 1,
+                    "nestedMarkers": 0
+                  },
+                  {
+                    "marker": "193",
+                    "chinese": "我们利用成熟的生物工程胶原蛋白贴片 28,29 作为支架，将重组RELN蛋白递送至心脏。",
+                    "english": "",
+                    "cacheValid": false,
+                    "groupFailure": null,
+                    "keyExists": true,
+                    "sameOwner": false,
+                    "ownerConnected": true,
+                    "sameUrl": true,
+                    "paragraphId": "p59",
+                    "copiesInParagraph": 1,
+                    "logicalFragments": 1,
+                    "englishSentences": null,
+                    "chineseStops": 1,
+                    "nestedMarkers": 0
+                  },
+                  {
+                    "marker": "194",
+                    "chinese": "在急性心肌梗死后立即将含有RELN的贴片和对照贴片缝合到约两个月大的受损心脏上（图4e，f）。",
+                    "english": "",
+                    "cacheValid": false,
+                    "groupFailure": null,
+                    "keyExists": true,
+                    "sameOwner": false,
+                    "ownerConnected": true,
+                    "sameUrl": true,
+                    "paragraphId": "p59",
+                    "copiesInParagraph": 1,
+                    "logicalFragments": 1,
+                    "englishSentences": null,
+                    "chineseStops": 1,
+                    "nestedMarkers": 0
+                  },
+                  {
+                    "marker": "195",
+                    "chinese": "每周评估心脏功能（心肌梗死后1-6周），心肌梗死后21天，RELN贴片组小鼠的射血分数显著提高（图4g）。",
+                    "english": "",
+                    "cacheValid": false,
+                    "groupFailure": null,
+                    "keyExists": true,
+                    "sameOwner": false,
+                    "ownerConnected": true,
+                    "sameUrl": true,
+                    "paragraphId": "p59",
+                    "copiesInParagraph": 1,
+                    "logicalFragments": 1,
+                    "englishSentences": null,
+                    "chineseStops": 1,
+                    "nestedMarkers": 0
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

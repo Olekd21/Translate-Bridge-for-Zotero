@@ -1,0 +1,86 @@
+// Run through Playwright CLI with the extension loaded in an isolated profile.
+export default async page => {
+  const context=page.context(),worker=context.serviceWorkers().find(w=>w.url().endsWith('/background.js'));
+  if(!worker)throw Error('Load the real extension in an isolated Chromium profile first');
+  const base=worker.url().replace('background.js',''),passed=[],dialogs=[];
+  const version=await worker.evaluate(()=>chrome.runtime.getManifest().version);
+  const archive=()=>worker.evaluate(async()=>(await chrome.storage.local.get('paperbridgeIssuesV1')).paperbridgeIssuesV1);
+  const watchDialogs=p=>p.on('dialog',async d=>{dialogs.push(d.message());await d.dismiss();});
+  watchDialogs(page);
+  if((await archive())?.records?.length)throw Error('Use a fresh isolated test profile');
+  const url='http://127.0.0.1:18841/fixtures/issue-replay.html';
+  const exact='这是用于复核的完整中文选区，记录后仍应能够找回原来的位置。';
+  await page.goto(url);await page.waitForSelector('#stable-source [data-pb-sentence]');
+  await page.evaluate(text=>{
+    const marker=document.querySelector('#stable-source [data-pb-sentence]');
+    const p=document.createElement('p');p.id='failed-projection';
+    const a=marker.cloneNode(false),b=marker.cloneNode(false);a.textContent=text.slice(0,12);b.textContent=text.slice(12);p.append(a,b);document.querySelector('#paper').append(p);
+    const range=document.createRange();range.selectNodeContents(p);getSelection().removeAllRanges();getSelection().addRange(range);p.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));
+  },exact);
+  await page.locator('.pb-selection-button').click();
+  await page.waitForFunction(()=>document.querySelector('.pb-status').dataset.tone==='warn');
+  // Service worker read provides a barrier after the failed selection operation.
+  if((await archive())?.records?.length)throw Error('failure automatically wrote a record');
+  const record=page.getByText('记录当前问题',{exact:true});
+  await record.click();
+  await page.waitForFunction(()=>document.querySelector('.pb-issue-capture-status').textContent.includes('累计 1 次'));
+  if(dialogs.length)throw Error('recording requested input: '+dialogs.join(';'));
+  const beforeFailure=JSON.stringify(await archive());
+  await page.locator('.pb-translate').click();
+  await page.waitForFunction(()=>!document.querySelector('.pb-translate').disabled);
+  if(JSON.stringify(await archive())!==beforeFailure)throw Error('repeated failure changed saved evidence');
+  await record.click();
+  await page.waitForFunction(()=>document.querySelector('.pb-issue-capture-status').textContent.includes('累计 2 次'));
+  passed.push('failures never persist; explicit clicks save without a dialog and count only clicks');
+  const row=await worker.evaluate(async text=>(await chrome.storage.local.get('paperbridgeIssuesV1')).paperbridgeIssuesV1.records.find(r=>r.latest.selector.exact===text),exact);
+  if(!row || row.latest.diagnostic.blocks[0].reason!=='invalid-sentence-fragment-groups')throw Error('manual capture missing');
+  if(row.code!=='invalid-sentence-fragment-groups' && row.latest.code!=='invalid-sentence-fragment-groups')throw Error('real error code replaced by manual');
+  if(!row.latest.diagnostic.sourceAssociation && !row.latest.diagnostic.blocks[0].sourceAssociation)throw Error('ownership evidence missing');
+  if(!row.latest.diagnostic.paragraphStructure.includes('data-pb-sentence'))throw Error('local paragraph structure missing');
+  passed.push('real MV3 record button captures mapping failure with source diagnostics and local structure');
+
+  const settings=await context.newPage();watchDialogs(settings);await settings.goto(base+'options.html');
+  await settings.waitForFunction(()=>document.querySelector('#version').textContent.includes('版本'));
+  const beforeSettings=JSON.stringify(await archive());
+  await settings.locator('#save').click();await settings.waitForFunction(()=>document.querySelector('#status').dataset.tone==='warn');
+  if(JSON.stringify(await archive())!==beforeSettings)throw Error('settings warning automatically saved');
+  await settings.locator('#record-issue').click();await settings.waitForFunction(()=>document.querySelector('#issue-capture-status').textContent.includes('已记入'));
+  if((await archive()).records.length!==2||dialogs.length)throw Error('settings record needs user input or lost entry');
+  await settings.close();passed.push('settings warnings also persist only after an explicit record click');
+  const manager=await context.newPage();await manager.goto(base+'issues.html');
+  const card=manager.locator(`[data-issue-id="${row.id}"]`);await card.waitFor();
+  await card.locator('select').selectOption('unresolved');await card.locator('textarea').fill('更新后逐条复核，保留首次错误。');await card.getByText('保存复核',{exact:true}).click();
+  await manager.waitForFunction(()=>document.querySelector('#issue-status').textContent.includes('已保存复核'));
+  await manager.reload();await manager.locator(`[data-issue-id="${row.id}"]`).waitFor();
+  if(await manager.locator(`[data-issue-id="${row.id}"] textarea`).inputValue()!=='更新后逐条复核，保留首次错误。')throw Error('review note not durable');
+  const downloadPromise=manager.waitForEvent('download');await manager.locator('#export-issues').click();const download=await downloadPromise;
+  await download.saveAs('E:/CodexProjects/ChatGPT/文献解读/output/playwright/issues154-export.json');
+  passed.push('manager persists user review and exports a local JSON archive');
+
+  const opened=context.waitForEvent('page');await manager.locator(`[data-issue-id="${row.id}"]`).getByText('打开文章并找回位置',{exact:true}).click();
+  const replay=await opened;await replay.waitForURL(url);await replay.waitForSelector('.pb-issue-review');
+  if(!(await replay.locator('.pb-issue-review').textContent()).includes('未找到唯一原选区'))throw Error('missing Chinese must be reported without guessing');
+  await replay.evaluate(text=>{const p=document.createElement('p');p.id='replayed-translation';p.textContent=text;document.querySelector('#paper').append(p);},exact);
+  await replay.getByText('重新查找位置',{exact:true}).click();
+  const matched=await replay.evaluate(()=>[...CSS.highlights.get('pb-issue-location')][0].toString());
+  if(matched!==exact)throw Error('replay did not find exact selection');
+  await replay.locator('.pb-issue-review textarea').fill('原选区已找回，人工验证完成。');await replay.getByText('已解决',{exact:true}).click();
+  await replay.waitForFunction(()=>document.querySelector('.pb-issue-review [role="status"]').textContent.includes('已保存'));
+  const reviewed=await worker.evaluate(async id=>(await chrome.storage.local.get('paperbridgeIssuesV1')).paperbridgeIssuesV1.records.find(r=>r.id===id),row.id);
+  if(reviewed.status!=='resolved'||reviewed.reviewVersion!==version||reviewed.reviews.length<2)throw Error('review result/history lost');
+  passed.push('reopening uses private tab routing, exact location after translation, and manual verification');
+
+  await replay.evaluate(()=>document.querySelector('#replayed-translation').firstChild.textContent='页面已改写为另一段完全不同的内容。');
+  await replay.getByText('用此选区重新匹配',{exact:true}).click();
+  if(!(await replay.locator('.pb-issue-review').textContent()).includes('页面已变化'))throw Error('stale range was reused');
+  await replay.evaluate(text=>{document.querySelector('#replayed-translation').textContent=text;const p=document.createElement('p');p.textContent=text;document.querySelector('#paper').append(p);},exact);
+  await replay.getByText('重新查找位置',{exact:true}).click();
+  if(!(await replay.locator('.pb-issue-review').textContent()).includes('发现多处相同文字'))throw Error('duplicate position was guessed');
+  if(await replay.evaluate(()=>CSS.highlights.has('pb-issue-location')))throw Error('ambiguous highlight remained');
+  passed.push('changed and duplicate locations refuse automatic reuse');
+  await manager.locator('#import-example').click();await manager.waitForFunction(()=>document.querySelector('#issue-status').textContent.includes('本次 Nature 案例'));
+  await manager.screenshot({path:'E:/CodexProjects/ChatGPT/文献解读/output/playwright/issues154-manager.png',fullPage:true});
+  passed.push('the user-reported Nature 1.5.2 diagnostic can be imported');
+  await replay.close();await manager.close();
+  return {passed,issueId:row.id,profile:'isolated real MV3 extension; Zotero was not paired'};
+};

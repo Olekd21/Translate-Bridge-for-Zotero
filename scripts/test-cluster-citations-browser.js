@@ -25,8 +25,8 @@ async(page)=>{
  const verified=[];
  globalThis.Translator={availability:async()=> 'available',create:async()=>({translate:async text=>{verified.push(text);return text===en1+'22, 23, 24'?zh:'不同的句子内容';}})};
  await choose(); await wait();
- if(document.querySelector('.pb-open-selection').disabled)throw Error('verified candidate unavailable');
- if(!verified.includes(en1+'22, 23, 24'))throw Error('first sentence candidate missing');
- return {passed:['citation sentence segmentation','reference exclusion','mixed marker rejected without verification','mock translator verified independent first-sentence candidate'],source};
+ if(!document.querySelector('.pb-open-selection').disabled)throw Error('invalid mixed marker bypassed structural validation');
+ if(verified.length)throw Error('translator was called for structurally invalid marker coverage');
+ return {passed:['citation sentence segmentation','reference exclusion','mixed marker rejected without verification','structurally invalid marker coverage cannot be bypassed by translator'],source};
  });
 }

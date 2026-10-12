@@ -6,6 +6,7 @@ const manifest = JSON.parse(
   await fs.readFile(path.join(root, "manifest.json"), "utf8"),
 );
 const required = [
+  'issue-store.js', 'issues.html', 'issues.js', 'issues.css', 'reported-issue-1.5.2.json',
   manifest.background?.service_worker,
   manifest.options_page,
   ...Object.values(manifest.icons || {}),

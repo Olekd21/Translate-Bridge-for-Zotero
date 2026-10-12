@@ -1,5 +1,5 @@
 (() => {
-  const currentVersion = "1.4.5";
+  const currentVersion = "1.5.5";
   if (window.__paperBridgeVersion === currentVersion) return;
   document.getElementById("paper-bridge-root")?.remove();
   window.__paperBridgeVersion = currentVersion;
@@ -18,6 +18,7 @@
     openTarget: null,
     mappingRequestId: 0,
     translationRequestId: 0,
+    translatorPromise: null,
     selectionRange: null,
     sourceParagraphsPromise: null,
     sourceParagraphsUrl: "",
@@ -39,7 +40,11 @@
   const originalTextById = new Map();
   const originalTextBySentence = new WeakMap();
   const sentenceByKey = new Map();
+  const sourceParagraphByKey = new Map();
   let nextSentenceKey = 0;
+  let nextParagraphKey = 0;
+  let sourceCaptureTimer = 0;
+  const pendingSourceScopes = new Set();
   const textContainerSelector =
     "p, li, blockquote, figcaption, td, th, h1, h2, h3, h4, h5, h6, div";
   const interactiveTextSelector = 'button, input, textarea, select, [role="button"], [role="textbox"], [contenteditable]:not([contenteditable="false"])';
@@ -153,11 +158,164 @@
       .trim();
   }
 
+  // Project normalized source offsets back onto the original DOM text. The
+  // sentence segmentation happens once, on the immutable normalized snapshot;
+  // reference-link newlines must not create a second, incompatible sentence list.
+  function readableTextProjection(raw) {
+    let text = "";
+    const starts = [], ends = [];
+    const tokens = /<\s*\/?\s*(?:sup|sub|em|strong|i|b)\s*>|&nbsp;|\s+|[^\s]/gi;
+    for (const match of raw.matchAll(tokens)) {
+      const value = normalizedReadableText(match[0]) || " ";
+      if (value === " " && (!text || text.endsWith(" "))) {
+        if (text) ends[ends.length - 1] = match.index + match[0].length;
+        continue;
+      }
+      text += value;
+      starts.push(match.index); ends.push(match.index + match[0].length);
+    }
+    if (text.endsWith(" ")) {text = text.slice(0, -1); starts.pop(); ends.pop();}
+    return {text, starts, ends};
+  }
+
   function looksPrimarilyEnglish(value) {
     const text = normalizedReadableText(value);
     const latinCount = (text.match(/[A-Za-z]/g) || []).length;
     const cjkCount = (text.match(/[\u3400-\u9fff]/g) || []).length;
     return latinCount >= 20 && cjkCount <= Math.max(2, latinCount * 0.03);
+  }
+
+  function currentPageUrl() {
+    return location.href.split("#")[0];
+  }
+
+  function compatibleSourceContainer(element, snapshot) {
+    return element?.tagName === snapshot?.tagName ||
+      (/^(P|DIV)$/.test(element?.tagName || "") && /^(P|DIV)$/.test(snapshot?.tagName || "") &&
+        isTextContainer(element));
+  }
+
+  function associateSourceParagraph(element, snapshot) {
+    if (!element || !snapshot || snapshot.url !== currentPageUrl() ||
+        !compatibleSourceContainer(element, snapshot)) return false;
+    originalTextByElement.set(element, snapshot);
+    element.dataset.pbParagraph = snapshot.key;
+    return true;
+  }
+
+  function hasCompleteSourceMarkerSet(element, snapshot) {
+    if (!snapshot?.markerKeys.size) return false;
+    const spans = [...element.querySelectorAll("[data-pb-sentence]")];
+    const records = spans.map(span => sentenceByKey.get(span.dataset.pbSentence));
+    if (!records.length || records.some(record => !record || record.paragraphKey !== snapshot.key))
+      return false;
+    const represented = new Set(records.map(record => record.key));
+    return [...snapshot.markerKeys].every(key => represented.has(key));
+  }
+
+  function sourceParagraphFromMarkers(element) {
+    const spans = [...element.querySelectorAll("[data-pb-sentence]")];
+    if (!spans.length) return null;
+    const records = spans.map(span => sentenceByKey.get(span.dataset.pbSentence));
+    if (records.some(record => !record?.paragraphKey || record.url !== currentPageUrl())) return null;
+    const paragraphKeys = new Set(records.map(record => record.paragraphKey));
+    if (paragraphKeys.size !== 1) return null;
+    const snapshot = sourceParagraphByKey.get(records[0].paragraphKey);
+    if (!snapshot || snapshot.url !== currentPageUrl() || !compatibleSourceContainer(element, snapshot)) return null;
+    // Google may clone every sentence marker several times inside one new
+    // paragraph. A complete source marker set is required, while physical
+    // uniqueness is deliberately not. An attribute alone cannot authorize a
+    // partially constructed or unrelated copy.
+    if (!hasCompleteSourceMarkerSet(element, snapshot)) return null;
+    associateSourceParagraph(element, snapshot);
+    return snapshot;
+  }
+
+  function sourceParagraphSnapshot(element) {
+    if (!element) return null;
+    const direct = originalTextByElement.get(element);
+    if (direct?.url === currentPageUrl()) return direct;
+    const retained = sourceParagraphByKey.get(element.dataset?.pbParagraph || "");
+    if (retained?.url === currentPageUrl() && hasCompleteSourceMarkerSet(element, retained) &&
+        associateSourceParagraph(element, retained)) return retained;
+    return sourceParagraphFromMarkers(element);
+  }
+
+  function sourceAssociationEvidence(element, spans) {
+    const keys = [...new Set(spans.map(span => span.dataset.pbSentence))];
+    const records = keys.map(key => sentenceByKey.get(key));
+    const sources = [...new Set(records.filter(Boolean).map(record => record.paragraphKey))];
+    return {
+      currentTag: element.tagName.toLowerCase(),
+      unknownMarkers: keys.filter((key, index) => !records[index]).slice(0, 20),
+      sources: sources.slice(0, 8).map(key => {
+        const saved = sourceParagraphByKey.get(key);
+        const missing = [...(saved?.markerKeys || [])].filter(marker => !keys.includes(marker));
+        return {paragraphId:key, sourceTag:saved?.tagName.toLowerCase(),
+          sourceSentences:saved?.sentences.length || 0, expectedMarkers:saved?.markerKeys.size || 0,
+          missingMarkerCount:missing.length, missingMarkers:missing.slice(0,20),
+          compatibleContainer:compatibleSourceContainer(element,saved),
+          ownerConnected:Boolean(saved?.sourceElement?.isConnected),
+          ownerContainsCurrent:Boolean(saved?.sourceElement?.contains(element))};
+      }),
+    };
+  }
+
+  function sourceSentenceDescriptors(text) {
+    const segments = englishSentenceSegments(text);
+    if (!segments.length || segments.length > 100 || sentenceByKey.size + segments.length > 20000)
+      return [];
+    let cursor = 0;
+    const descriptors = [];
+    for (let sentenceIndex = 0; sentenceIndex < segments.length; sentenceIndex++) {
+      const sentence = normalizedReadableText(segments[sentenceIndex].segment);
+      const sourceStart = text.indexOf(sentence, cursor);
+      if (!sentence || sourceStart < 0) return [];
+      const sourceEnd = sourceStart + sentence.length;
+      descriptors.push({ sentenceIndex, text: sentence, sourceStart, sourceEnd });
+      cursor = sourceEnd;
+    }
+    return descriptors;
+  }
+
+  function createSourceParagraphSnapshot(element, text) {
+    const existing = sourceParagraphSnapshot(element);
+    if (existing) return existing;
+    const descriptors = sourceSentenceDescriptors(text);
+    if (!descriptors.length) return null;
+    const snapshot = {
+      key: `p${++nextParagraphKey}`,
+      url: currentPageUrl(),
+      text,
+      tagName: element.tagName,
+      sourceElement: element,
+      sentences: [],
+      sentenceKeys: new Set(),
+      markerKeys: new Set(),
+    };
+    for (const descriptor of descriptors) {
+      const key = String(++nextSentenceKey);
+      const saved = Object.freeze({
+        ...descriptor,
+        key,
+        url: snapshot.url,
+        paragraph: element,
+        paragraphKey: snapshot.key,
+      });
+      snapshot.sentences.push(saved);
+      snapshot.sentenceKeys.add(key);
+      sentenceByKey.set(key, saved);
+    }
+    Object.freeze(snapshot.sentences);
+    sourceParagraphByKey.set(snapshot.key, snapshot);
+    associateSourceParagraph(element, snapshot);
+    return snapshot;
+  }
+
+  function sentenceBelongsToElement(saved, element) {
+    if (!saved || saved.url !== currentPageUrl()) return false;
+    if (!saved.paragraphKey) return saved.paragraph === element;
+    return sourceParagraphSnapshot(element)?.key === saved.paragraphKey;
   }
 
   function isPdfAnchorReady(anchor) {
@@ -173,45 +331,78 @@
     // Mutation records can refer to text detached before observer delivery.
     // Skip it without aborting the rest of the batch of valid paragraphs.
     if (!scope || !scope.isConnected) return;
-    const candidates = [
+    const candidates = new Set([
       ...(scope.closest?.(textContainerSelector) ? [scope.closest(textContainerSelector)] : []),
       ...(scope.matches?.(textContainerSelector) ? [scope] : []),
       ...Array.from(scope.querySelectorAll?.(textContainerSelector) || []),
-    ];
+    ]);
     for (const element of candidates) {
       if (root.contains(element) || !isTextContainer(element)) continue;
       const text = normalizedReadableText(element.textContent);
-      // Never overwrite a complete English snapshot with a partially translated
-      // paragraph merely because most of its characters are still Latin.
+      const snapshot = sourceParagraphSnapshot(element);
+      if (snapshot) {
+        // A source paragraph is immutable for the lifetime of this document.
+        // Reapply its known boundaries only when the exact English source was
+        // restored; translated or intermediate DOM can only become a projection.
+        if (text === snapshot.text && !/[\u3400-\u9fff]/.test(text))
+          preserveSentenceBoundaries(element, snapshot);
+        continue;
+      }
+      // Known sentence markers without a complete paragraph identity are an
+      // incomplete translation projection. Never turn it into a new source.
+      if ([...element.querySelectorAll("[data-pb-sentence]")]
+        .some(span => sentenceByKey.has(span.dataset.pbSentence))) continue;
       if (looksPrimarilyEnglish(text) && !/[\u3400-\u9fff]/.test(text)) {
-        originalTextByElement.set(element, {
-          url: location.href.split("#")[0],
-          text,
-        });
-        if (element.id && originalTextById.size < 5000)
-          originalTextById.set(
-            `${location.href.split("#")[0]}#${element.id}`,
-            text,
-          );
-        if (document.readyState !== "loading") preserveSentenceBoundaries(element);
+        const captured = createSourceParagraphSnapshot(element, text);
+        if (!captured) continue;
+        if (element.id && originalTextById.size < 5000) {
+          const idKey = `${currentPageUrl()}#${element.id}`;
+          if (!originalTextById.has(idKey)) originalTextById.set(idKey, text);
+        }
+        preserveSentenceBoundaries(element, captured);
       }
     }
   }
 
-  rememberEnglishContainers();
-  document.addEventListener("DOMContentLoaded", () => rememberEnglishContainers(), { once: true });
+  function flushPendingEnglishCaptures() {
+    sourceCaptureTimer = 0;
+    const scopes = [...pendingSourceScopes];
+    pendingSourceScopes.clear();
+    for (const candidate of scopes)
+      if (!scopes.some(other => other !== candidate && other.contains(candidate)))
+        rememberEnglishContainers(candidate);
+  }
+
+  function scheduleEnglishCapture(scope) {
+    if (!scope?.isConnected) return;
+    pendingSourceScopes.add(scope);
+    // The HTML parser can expose a paragraph before all of its text children
+    // exist. Capture the initial document at DOMContentLoaded, then batch later
+    // dynamic mutations into one task without adding visible interaction lag.
+    if (document.readyState === "loading" || sourceCaptureTimer) return;
+    sourceCaptureTimer = setTimeout(flushPendingEnglishCaptures, 0);
+  }
+
+  const captureInitialEnglish = () => {
+    pendingSourceScopes.clear();
+    rememberEnglishContainers();
+  };
+  if (document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", captureInitialEnglish, { once: true });
+  else captureInitialEnglish();
   new MutationObserver((records) => {
     for (const record of records) {
       if (root.contains(record.target)) continue;
       if (record.type === "characterData") {
-        rememberEnglishContainers(record.target.parentElement);
+        scheduleEnglishCapture(record.target.parentElement);
         continue;
       }
+      if (!record.addedNodes.length) scheduleEnglishCapture(record.target);
       for (const node of record.addedNodes) {
         if (node.nodeType === Node.ELEMENT_NODE)
-          rememberEnglishContainers(node);
+          scheduleEnglishCapture(node);
         else if (node.nodeType === Node.TEXT_NODE)
-          rememberEnglishContainers(node.parentElement);
+          scheduleEnglishCapture(node.parentElement);
       }
     }
   }).observe(document.documentElement, {
@@ -348,6 +539,71 @@
   const boundaryDetailsButton = root.querySelector(".pb-boundary-details");
   let diagnosticCopyRequest = 0;
   let diagnosticResetTimer;
+  let pendingIssue = null;
+  const issueActions = document.createElement('div'); issueActions.className='pb-issue-actions';
+  const recordIssueButton = document.createElement('button');recordIssueButton.type='button';recordIssueButton.textContent='记录当前问题';
+  const issueLibraryButton = document.createElement('button');issueLibraryButton.type='button';issueLibraryButton.textContent='问题记录';
+  const issueCaptureStatus=document.createElement('span');issueCaptureStatus.className='pb-issue-capture-status';issueCaptureStatus.setAttribute('role','status');
+  issueActions.append(recordIssueButton,issueLibraryButton,issueCaptureStatus);root.querySelector('.pb-dock').append(issueActions);
+  issueLibraryButton.onclick=()=>void chrome.runtime.sendMessage({type:'paperbridge:issue-page'}).catch(error=>{issueCaptureStatus.textContent=error.message;});
+  recordIssueButton.onclick=async()=>{
+    const context=issueContext();
+    const current=pendingIssue?.context.anchor===context.anchor && pendingIssue.context.document.url===context.document.url
+      ? pendingIssue : {message:statusNode.textContent,category:'manual',context};
+    recordIssueButton.disabled=true;
+    try {await recordLocalIssue(current.message,current.category,current.context);}
+    finally {recordIssueButton.disabled=false;}
+  };
+
+  function issueContext() {
+    return {anchor:state.anchor,document:{url:currentPageUrl(),doi:extractDoi(),title:document.title}};
+  }
+  function issueEvidence(message, category, context=issueContext()) {
+    const anchor=context.anchor || {},diagnostic=locationDiagnostic(true,anchor);
+    // Only selected paragraph structure is recorded, never the whole page,
+    // cookies, form values, pairing settings or the user's note editor.
+    const range=anchorRanges.get(anchor) || (context.anchor===state.anchor ? state.selectionRange : null);
+    const container=range?.commonAncestorContainer;
+    const element=container && nearestTextContainer(container);
+    if(element && !root.contains(element)) {
+      const clone=element.cloneNode(true);
+      clone.querySelectorAll('script,style,input,textarea,select,iframe,object,embed').forEach(node=>node.remove());
+      for(const node of [clone,...clone.querySelectorAll('*')])for(const attr of [...node.attributes])
+        if(!['data-pb-sentence','data-pb-paragraph','id','role'].includes(attr.name))node.removeAttribute(attr.name);
+      const html=clone.outerHTML;diagnostic.paragraphStructure=html.slice(0,12000);diagnostic.structureTruncated=html.length>12000;
+    }
+    const failure=diagnostic.blocks?.find(block=>block.reason && block.reason!=='captured');
+    return {version:currentVersion,category,code:failure?.reason || message || 'manual',
+      message,document:context.document,
+      selector:{exact:anchor.translatedSelection || anchor.exact || '',prefix:anchor.prefix || '',suffix:anchor.suffix || '',
+        paragraph:anchor.translatedParagraph || anchor.paragraph || '',
+        english:anchor.selectionMode==='translated' || anchor.selectedLanguage==='en'?anchor.exact || '':'',
+        containerId:anchor.containerId || '',sectionHeading:anchor.sectionHeading || ''},diagnostic};
+  }
+  // Keep only the current error in memory. Diagnostics and storage are touched
+  // exclusively by the user's record button, never by an error callback.
+  function rememberIssue(message,category,context=issueContext()) {
+    if(context.anchor===state.anchor && context.document.url===currentPageUrl())
+      pendingIssue={message,category,context};
+  }
+  async function recordLocalIssue(message,category,context) {
+    try {
+      const result=await chrome.runtime.sendMessage({type:'paperbridge:record-issue',issue:issueEvidence(message,category,context)});
+      if(!result?.ok)throw Error(result?.error || '无法写入问题记录');
+      issueCaptureStatus.textContent=`已记入本机问题库（累计 ${result.occurrences} 次）`;
+    }catch(error){
+      issueCaptureStatus.textContent=`问题未保存：${error.message}。可先复制诊断备份。`;
+    }
+  }
+  async function bridgeMessage(message) {
+    const context=issueContext();
+    try {
+      const response=await chrome.runtime.sendMessage(message);
+      if(response?.ok===false && !message.type?.startsWith('paperbridge:issue'))
+        rememberIssue(response.error || '插件操作失败',message.type,context);
+      return response;
+    }catch(error){rememberIssue(error.message || String(error),message.type,context);throw error;}
+  }
   function resetDiagnosticButtons() {
     diagnosticCopyRequest += 1;
     clearTimeout(diagnosticResetTimer);
@@ -359,6 +615,8 @@
   function setStatus(text, tone = "neutral", diagnosticError = tone === "warn") {
     statusNode.textContent = text;
     statusNode.dataset.tone = tone;
+    if (diagnosticError) rememberIssue(text, "selection");
+    else pendingIssue = null;
     diagnosticsButton.hidden = !diagnosticError || state.anchor?.selectedLanguage !== "zh";
     boundaryDetailsButton.hidden = diagnosticsButton.hidden;
     if (tone === "warn") requestAnimationFrame(() => {
@@ -527,22 +785,8 @@
   }
 
   function capturedOriginal(element) {
-    const url = location.href.split("#")[0];
-    let saved = originalTextByElement.get(element);
-    // A publisher or translator can replace the whole paragraph, not just a
-    // sentence span. Adopt only a complete, unique set from one detached owner.
-    const spans = [...element.querySelectorAll("[data-pb-sentence]")];
-    const records = spans.map(span => sentenceByKey.get(span.dataset.pbSentence));
-    const owner = records[0]?.paragraph;
-    if (owner && owner !== element && !owner.isConnected && records.every(record => record?.paragraph === owner && record.url === url) &&
-        spans.every(span => document.querySelectorAll(`[data-pb-sentence="${CSS.escape(span.dataset.pbSentence)}"]`).length === 1)) {
-      const previous = originalTextByElement.get(owner);
-      if (previous?.url === url) {
-        originalTextByElement.set(element, previous);
-        saved = previous;
-        for (const record of records) record.paragraph = element;
-      }
-    }
+    const url = currentPageUrl();
+    const saved = sourceParagraphSnapshot(element);
     if (saved?.url === url) return saved.text;
     if (element.id && document.querySelectorAll(`[id="${CSS.escape(element.id)}"]`).length === 1)
       return originalTextById.get(`${url}#${element.id}`) || "";
@@ -565,14 +809,17 @@
     protect(/\b(?:e\.g|i\.e)\./gi);
     protect(/\b(?:vs|cf|viz)\.(?=\s+\S)/gi);
     protect(/\b(?:Dr|Prof|Mr|Mrs|Ms)\.(?=\s+[A-Z][a-z])/g);
+    // A supplier suffix before its address/dilution is not a sentence end.
+    protect(/\b(?:Inc|Ltd|Corp|Co)\.(?=\s*\([^)]*\))/g);
     // "et al." can also end a real sentence. An uppercase following sentence
     // remains a boundary; a year/citation or lowercase continuation does not.
     protect(/\bet\s+al\.(?=\s*(?:\(?\d|[a-z]))/g);
     // Keep sentence-final references with the preceding sentence. Intl may
     // otherwise split inside "increased.[12,13] The control...". Restore the
     // real boundary AFTER the reference, never inside a protected abbreviation.
-    const citations = /(?<=[a-z)])[.!?](?:\[\s*\d+(?:\s*[,–−-]\s*\d+)*\s*\]|\d+(?:\s*[,–−-]\s*\d+)*)\s+(?=[A-Z][a-z])/g;
-    const citationBreaks = [...raw.matchAll(citations)].filter(match => !protectedPeriods.has(match.index));
+    const citations = /(?<=[A-Za-z0-9)])[.!?][)\]"']*\s*(?:\[\s*\d+(?:\s*[,–−-]\s*\d+)*\s*\]|\d+(?:\s*[,–−-]\s*\d+)*)(?:\s+(?=[A-Z][A-Za-z0-9-])|\s*$)/g;
+    const citationBreaks = [...raw.matchAll(citations)].filter(match =>
+      !protectedPeriods.has(match.index) && citationBoundaryLooksTerminal(raw, match.index));
     const masked = new Set([...protectedPeriods, ...citationBreaks.map(match => match.index)]);
     const segmentationText = raw.replace(/[.!?]/g, (period, index) => masked.has(index) ? "\u2060" : period);
     const base = Array.from(new Intl.Segmenter("en", { granularity: "sentence" }).segment(segmentationText), part => ({
@@ -591,23 +838,90 @@
     });
   }
 
-  function preserveSentenceBoundaries(element) {
+  function citationBoundaryLooksTerminal(raw, punctuationIndex) {
+    if (raw[punctuationIndex] !== ".")
+      return true;
+    const precedingToken = raw.slice(0, punctuationIndex).match(/[A-Za-z0-9.]+$/)?.[0] || "";
+    // Appendix and outline labels such as B.6 are not a completed sentence
+    // followed by reference 6.
+    if (/^[A-Z]$/.test(precedingToken)) return false;
+    if (!/\d/.test(raw[punctuationIndex - 1] || "")) return true;
+    // A dot directly between two digits is normally a decimal point. It can
+    // only be a sentence boundary before a numeric citation when the token on
+    // its left already contains an earlier decimal point, as in E14.5.13.
+    // This keeps bare E14.5, 1.25 and 0.05 values non-terminal.
+    return precedingToken.includes(".");
+  }
+
+  function englishSentenceEndsAtTerminal(value) {
+    const text = normalizedReadableText(value);
+    if (/[.!?][)\]"']*$/.test(text)) return true;
+    const citationSuffix = text.match(/[.!?][)\]"']*\s*(?:\[\s*\d+(?:\s*[,–−-]\s*\d+)*\s*\]|\d+(?:\s*[,–−-]\s*\d+)*)\s*$/);
+    return Boolean(citationSuffix && citationBoundaryLooksTerminal(text, citationSuffix.index));
+  }
+
+  function sentenceSourceBounds(saved, originalParagraph) {
+    if (!saved?.text || !originalParagraph) return null;
+    const snapshot = sourceParagraphByKey.get(saved.paragraphKey || "");
+    if (snapshot?.text === originalParagraph &&
+        Number.isInteger(saved.sourceStart) && Number.isInteger(saved.sourceEnd) &&
+        originalParagraph.slice(saved.sourceStart, saved.sourceEnd) === saved.text)
+      return { start: saved.sourceStart, end: saved.sourceEnd };
+    if (Number.isInteger(saved.sentenceIndex) && saved.sentenceIndex >= 0) {
+      const sources = englishSentenceSegments(originalParagraph)
+        .map(part => normalizedReadableText(part.segment))
+        .filter(Boolean);
+      if (sources[saved.sentenceIndex] === saved.text) {
+        let cursor = 0;
+        for (let index = 0; index <= saved.sentenceIndex; index++) {
+          const at = originalParagraph.indexOf(sources[index], cursor);
+          if (at < 0) return null;
+          const end = at + sources[index].length;
+          if (index === saved.sentenceIndex) return {start:at,end};
+          cursor = end;
+        }
+      }
+    }
+    const at = originalParagraph.indexOf(saved.text);
+    if (at < 0 || originalParagraph.indexOf(saved.text, at + 1) >= 0) return null;
+    return {start:at,end:at + saved.text.length};
+  }
+
+  function preserveSentenceBoundaries(element, snapshot = sourceParagraphSnapshot(element)) {
     // Keep an actual English sentence attached to its DOM range before Chrome
     // translates it. No sentence-order or translation-similarity guess is used.
     if (!("Segmenter" in Intl)) return;
     if (element.closest("nav, header, footer, [contenteditable=true]") ||
         element.querySelector("script, style, pre, code, svg, input, textarea")) return;
     const raw = element.textContent;
-    if (!looksPrimarilyEnglish(raw) || raw.length > 20000) return;
+    if (!snapshot || snapshot.url !== currentPageUrl() ||
+        normalizedReadableText(raw) !== snapshot.text ||
+        !looksPrimarilyEnglish(raw) || raw.length > 20000) return;
     const existing = [...element.querySelectorAll("[data-pb-sentence]")];
     if (existing.length) {
-      if (existing.every(span => sentenceByKey.get(span.dataset.pbSentence)?.paragraph === element)) return;
+      const records = existing.map(span => sentenceByKey.get(span.dataset.pbSentence));
+      if (records.every(record => record?.paragraphKey === snapshot.key)) {
+        for (const record of records) snapshot.markerKeys.add(record.key);
+        associateSourceParagraph(element, snapshot);
+        return;
+      }
+      // A known key belongs to an immutable source snapshot. Mixed or partial
+      // ownership is unsafe, so never unwrap it and recapture translated text.
+      if (records.some(Boolean)) return;
       // English was restored with stale markers from an earlier script. Rebuild
       // from the actual English text instead of permanently skipping this block.
       for (const span of existing.reverse()) span.replaceWith(...span.childNodes);
     }
-    const segments = englishSentenceSegments(raw);
-    if (segments.length < 1 || segments.length > 100) return;
+    const projection = readableTextProjection(raw);
+    if (projection.text !== snapshot.text) return;
+    // Keep bibliography numbers intact. Scientific superscripts remain inside
+    // the translatable sentence: excluding them makes Google split gene names
+    // and insert spurious sentence endings around the excluded fragment.
+    for (const node of element.querySelectorAll("a[href]")) {
+      if (!isBibliographyReferenceLink(node)) continue;
+      node.setAttribute("translate", "no");
+      node.classList.add("notranslate");
+    }
     const texts = [];
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
     let offset = 0;
@@ -617,44 +931,45 @@
       offset += node.length;
     }
     // Work backwards so earlier text offsets remain valid after extraction.
-    for (const segment of segments.reverse()) {
-      // Whitespace belongs between sentences, not inside the last inline
-      // ancestor. Including it needlessly crosses publisher ID boundaries.
-      const start = segment.index + segment.segment.length - segment.segment.trimStart().length;
-      const end = segment.index + segment.segment.trimEnd().length;
+    for (const saved of [...snapshot.sentences].reverse()) {
+      const start = projection.starts[saved.sourceStart];
+      const end = projection.ends[saved.sourceEnd - 1];
       const first = texts.find(t => t.end > start);
       const last = texts.find(t => t.end >= end && t.start < end);
-      if (!first || !last || !segment.segment.trim()) continue;
+      if (!first || !last || !Number.isInteger(start) || !Number.isInteger(end)) continue;
       const range = document.createRange();
       range.setStart(first.node, start - first.start);
       range.setEnd(last.node, end - last.start);
       if (first.node.parentElement.closest(interactiveTextSelector) ||
           last.node.parentElement.closest(interactiveTextSelector) ||
           range.cloneContents().querySelector(interactiveTextSelector)) continue;
-      // Do not split an inline element with an ID: cloning that boundary could
-      // create duplicate publisher link targets. Fall back to paragraph cache.
-      const splitsIdentifiedElement = (node) => {
-        // extractContents only clones partially selected ancestors below the
-        // range's common ancestor. An ID on that ancestor is retained intact.
-        const common = range.commonAncestorContainer;
-        if (common.nodeType === Node.TEXT_NODE) return false;
-        for (let parent = node.parentElement; parent && parent !== common && parent !== element; parent = parent.parentElement)
-          if (parent.id) return true;
-        return false;
-      };
-      if (splitsIdentifiedElement(first.node) || splitsIdentifiedElement(last.node)) continue;
-      if (sentenceByKey.size >= 20000) return;
       const span = document.createElement("span");
-      span.dataset.pbSentence = String(++nextSentenceKey);
-      span.appendChild(range.extractContents());
+      span.dataset.pbSentence = saved.key;
+      // An atomic inline box gives native Google Translate an explicit unit.
+      // Plain inline spans are freely split and moved across sentence borders.
+      span.style.display = "inline-block";
+      span.style.maxWidth = "100%";
+      const contents = range.extractContents();
+      // Range extraction clones partially selected inline ancestors. Wiley and
+      // other publishers often put IDs on those wrappers, so refusing the
+      // range used to leave an otherwise valid paragraph with zero sentence
+      // anchors. Keep the range and resolve only the duplicate identifier: an
+      // empty remainder yields its ID to the extracted clone; a substantive
+      // remainder keeps the ID and the clone becomes anonymous.
+      for (const clone of contents.querySelectorAll("[id]")) {
+        const id = clone.id;
+        if (!id) continue;
+        const retained = document.getElementById(id);
+        if (!retained) continue;
+        const retainedHasContent = normalizedReadableText(retained.textContent) ||
+          retained.querySelector("img, svg, video, audio, canvas, iframe, object, embed");
+        if (retainedHasContent) clone.removeAttribute("id");
+        else retained.removeAttribute("id");
+      }
+      span.appendChild(contents);
       range.insertNode(span);
-      const saved = {
-        url: location.href.split("#")[0],
-        text: normalizedReadableText(segment.segment),
-        paragraph: element,
-      };
       originalTextBySentence.set(span, saved);
-      sentenceByKey.set(span.dataset.pbSentence, saved);
+      snapshot.markerKeys.add(saved.key);
     }
   }
 
@@ -663,10 +978,10 @@
     if (!saved) {
       const key = span.dataset.pbSentence;
       const keyed = sentenceByKey.get(key);
-      if (keyed?.paragraph === element &&
+      if (sentenceBelongsToElement(keyed, element) &&
           element.querySelectorAll(`[data-pb-sentence="${CSS.escape(key)}"]`).length === 1) saved = keyed;
     }
-    return saved?.paragraph === element && saved.url === location.href.split("#")[0] ? saved : null;
+    return sentenceBelongsToElement(saved, element) ? saved : null;
   }
 
   function sentenceGroups(element, spans, originalParagraph, diagnostic = {}) {
@@ -682,11 +997,12 @@
     for (const span of spans) {
       const key = span.dataset.pbSentence, saved = sentenceByKey.get(key);
       if (!saved) return reject("unknown-key", span);
-      if (saved.paragraph !== element) return reject("foreign-owner", span);
-      if (saved.url !== location.href.split("#")[0]) return reject("stale-url", span);
+      if (!sentenceBelongsToElement(saved, element)) return reject("foreign-owner", span);
+      if (saved.url !== currentPageUrl()) return reject("stale-url", span);
       if (span.querySelector("[data-pb-sentence]")) return reject("nested-markers", span);
-      const at = originalParagraph.indexOf(saved.text);
-      if (at < 0 || originalParagraph.indexOf(saved.text, at + 1) >= 0) return reject("ambiguous-source", span);
+      const bounds = sentenceSourceBounds(saved, originalParagraph);
+      if (!bounds) return reject("ambiguous-source", span);
+      const at = bounds.start;
       // Only real reference links (or empty translator clones) may intervene.
       const fragmentRange = document.createRange(); fragmentRange.selectNodeContents(span);
       if (!normalizedReadableText(selectionWithoutReferences(fragmentRange, true))) continue;
@@ -699,8 +1015,8 @@
           return reject(seen.has(key) ? "noncontiguous-key" : "source-order", span);
         }
         seen.add(key);
-        groups.push({key, span, last:span, saved, sourceStart:at,
-          sourceEnd:at + saved.text.length, fragments:[span]});
+        groups.push({key, span, last:span, saved, sourceStart:bounds.start,
+          sourceEnd:bounds.end, fragments:[span]});
       }
     }
     for (const group of groups) {
@@ -737,12 +1053,11 @@
     const records = new Map();
     for (const span of spans) {
       const key = span.dataset.pbSentence, saved = sentenceByKey.get(key);
-      if (!saved || saved.paragraph !== element || saved.url !== location.href.split("#")[0] ||
+      if (!saved || !sentenceBelongsToElement(saved, element) || saved.url !== currentPageUrl() ||
           span.querySelector('[data-pb-sentence]')) return null;
-      const at = originalParagraph.indexOf(saved.text);
-      if (at < 0 || originalParagraph.indexOf(saved.text, at + 1) >= 0 ||
-          englishSentenceSegments(saved.text).length !== 1) return null;
-      records.set(key, {saved, sourceStart:at, sourceEnd:at + saved.text.length});
+      const bounds = sentenceSourceBounds(saved, originalParagraph);
+      if (!bounds || englishSentenceSegments(saved.text).length !== 1) return null;
+      records.set(key, {saved, sourceStart:bounds.start, sourceEnd:bounds.end});
     }
     const whole = document.createRange(); whole.selectNodeContents(element);
     const raw = whole.toString(), groups = [], seen = new Set();
@@ -826,7 +1141,7 @@
       const tail = current.match(/[。！？][”’」』）)\]]*\s*([^。！？]+)$/u);
       if (!tail || englishSentenceSegments(source).length !== 1 ||
           englishSentenceSegments(nextSource).length !== 1 ||
-          !/[.!?][)\]"']*$/.test(source) || !/[\u3400-\u9fff]/.test(current.slice(0, tail.index)) ||
+          !englishSentenceEndsAtTerminal(source) || !/[\u3400-\u9fff]/.test(current.slice(0, tail.index)) ||
           !/[。！？]/u.test(next) || !/[\u3400-\u9fff]/.test(next)) continue;
       const gap = document.createRange();
       gap.setStart(ranges[i].endContainer, ranges[i].endOffset);
@@ -867,7 +1182,7 @@
       const continuation = next.textContent.match(/^\s*([-‐‑‒–—]\s*[A-Za-z][A-Za-z0-9‐‑‒–—-]*)/u);
       const saved = sentenceRecord(next, element);
       const currentSaved = sentenceRecord(current, element);
-      if (!tail || !saved || !currentSaved || !/[.!?][)\]"']*$/.test(currentSaved.text)) continue;
+      if (!tail || !saved || !currentSaved || !englishSentenceEndsAtTerminal(currentSaved.text)) continue;
       const normalizeToken = value => value.toLowerCase().replace(/[‐‑‒–—]/g, "-").replace(/\s+/g, "");
       const chineseTail = /[\u3400-\u9fff]/.test(tail[1]);
       if (chineseTail) {
@@ -916,9 +1231,10 @@
         cacheValid: Boolean(record),
         groupFailure: groups?.[groupIndex].failure || null,
         keyExists: Boolean(keyRecord),
-        sameOwner: keyRecord?.paragraph === element,
+        sameOwner: sentenceBelongsToElement(keyRecord, element),
         ownerConnected: Boolean(keyRecord?.paragraph?.isConnected),
-        sameUrl: keyRecord?.url === location.href.split("#")[0],
+        sameUrl: keyRecord?.url === currentPageUrl(),
+        paragraphId: keyRecord?.paragraphKey || null,
         copiesInParagraph: element.querySelectorAll(`[data-pb-sentence="${CSS.escape(span.dataset.pbSentence)}"]`).length,
         logicalFragments: groups?.[groupIndex].fragments.length || 1,
         englishSentences: record ? englishSentenceSegments(record.text).length : null,
@@ -943,7 +1259,7 @@
     if (groups ? current?.chineseStops < 1 : current?.chineseStops !== 1)
       blockers.push(groups ? "current-chinese-terminal-missing" : "current-chinese-not-single-sentence");
     if (current?.nestedMarkers) blockers.push("nested-markers");
-    if (current?.english && !/[.!?][)\]"']*$/.test(current.english)) blockers.push("english-ending-not-terminal");
+    if (current?.english && !englishSentenceEndsAtTerminal(current.english)) blockers.push("english-ending-not-terminal");
     return { repairBlockers: blockers, neighboringMarkers: [...spans].slice(Math.max(0,index-1),index+4).map(describe) };
   }
 
@@ -956,6 +1272,7 @@
       const id = decodeURIComponent(target.hash.slice(1));
       const node = document.getElementById(id);
       return Boolean(node?.closest('[role="doc-biblioentry"], [role="doc-bibliography"]')) ||
+        Boolean(node?.matches('li') && node.closest('ol.ref-list, ul.ref-list, section.ref-list, .bibliography')) ||
         /^(?:ref(?:erence)?[-_:]?(?:CR)?\d|bib[-_:]?\d|cit[-_:]?\d)/i.test(id);
     } catch { return false; }
   }
@@ -1046,7 +1363,9 @@
     if (englishSentenceSegments(original).length !== 1) return null;
     const text = bounds.toString();
     const sentences = [...text.matchAll(/[^。！？]+[。！？]+[”’」』）)\]]*/gu)];
-    if (sentences.length < 2 || text.slice(sentences.at(-1).index + sentences.at(-1)[0].length).trim()) return null;
+    if (sentences.length < 2) return null;
+    const tail = sliceTextRange(bounds, sentences.at(-1).index + sentences.at(-1)[0].length, text.length);
+    if (tail && selectionWithoutReferences(tail)) return null;
     const selected = [];
     for (const [index, sentence] of sentences.entries()) {
       const unit = sliceTextRange(bounds, sentence.index, sentence.index + sentence[0].length);
@@ -1056,7 +1375,7 @@
         intersection.setStart(unit.startContainer, unit.startOffset);
       if (intersection.compareBoundaryPoints(Range.END_TO_END, unit) > 0)
         intersection.setEnd(unit.endContainer, unit.endOffset);
-      if (!compactChinese(intersection.toString())) continue;
+      if (!selectionWithoutReferences(intersection)) continue;
       // Validate both ends, not only a trailing full stop. Selecting from the
       // middle of a Chinese sentence must not offer a larger source scope.
       if (selectionWithoutReferences(intersection) !== selectionWithoutReferences(unit)) return null;
@@ -1084,8 +1403,12 @@
       return source;
     };
     let spans = [...element.querySelectorAll("[data-pb-sentence]")];
-    diagnostic.sentenceAnchors = spans.length;
+    const snapshot = sourceParagraphSnapshot(element);
+    diagnostic.sentenceAnchors = new Set(spans.map(span => span.dataset.pbSentence)).size;
+    diagnostic.physicalSentenceFragments = spans.length;
+    diagnostic.sourceSentenceAnchors = snapshot?.sentences.length || 0;
     diagnostic.hasEnglishParagraph = Boolean(originalParagraph);
+    if (!snapshot && spans.length) diagnostic.sourceAssociation = sourceAssociationEvidence(element, spans);
     diagnostic.reason = spans.length ? "no-selected-sentence" : "no-sentence-anchors";
     const groups = sentenceGroups(element, spans, originalParagraph, diagnostic);
     // A fully selected, fully covered source paragraph does not need every
@@ -1125,7 +1448,7 @@
       if (range.compareBoundaryPoints(Range.END_TO_END, bounds) > 0)
         range.setEnd(bounds.endContainer, bounds.endOffset);
       const selected = normalizedReadableText(range.toString());
-      if (!compactChinese(selected)) continue;
+      if (!selectionWithoutReferences(range)) continue;
       if (groups?.[index].failure) {
         diagnostic.reason = "invalid-sentence-fragment-groups";
         diagnostic.fragmentGroupFailure = groups[index].failure;
@@ -1133,7 +1456,7 @@
         return null;
       }
       const saved = groups?.[index].saved || sentenceRecord(span, element);
-      if (!saved || saved.paragraph !== element || saved.url !== location.href.split("#")[0]) {
+      if (!saved || !sentenceBelongsToElement(saved, element) || saved.url !== currentPageUrl()) {
         diagnostic.boundary = { marker: span.dataset.pbSentence, selected: selected.slice(0,1500), ...boundaryEvidence(element, spans, index) };
         diagnostic.reason = "sentence-cache-missing"; return null;
       }
@@ -1875,6 +2198,7 @@
 
   async function getTranslator() {
     if (state.translator) return state.translator;
+    if (state.translatorPromise) return state.translatorPromise;
     if (!("Translator" in globalThis)) {
       throw new Error(
         "当前 Chrome 不支持本地 Translator API；需要 Chrome 138 或更高版本。",
@@ -1889,11 +2213,16 @@
       throw new Error("当前设备不支持英译中语言包。");
     }
 
-    state.translator = await globalThis.Translator.create({
+    state.translatorPromise = globalThis.Translator.create({
       sourceLanguage: "en",
       targetLanguage: "zh",
     });
-    return state.translator;
+    try {
+      state.translator = await state.translatorPromise;
+      return state.translator;
+    } finally {
+      state.translatorPromise = null;
+    }
   }
 
   async function translateSelection() {
@@ -2110,7 +2439,7 @@
     };
 
     try {
-      const response = await chrome.runtime.sendMessage({
+      const response = await bridgeMessage({
         type: "paperbridge:sync",
         annotation,
       });
@@ -2162,7 +2491,7 @@
     openDocumentButton.disabled = true;
     setStatus("正在 Zotero 中打开这篇文章……");
     try {
-      const response = await chrome.runtime.sendMessage({
+      const response = await bridgeMessage({
         type: "paperbridge:open-document",
         locator: documentLocator(),
       });
@@ -2203,11 +2532,11 @@
     setStatus("正在 PDF 全文中定位当前段落；首次读取可能需要几秒……");
     try {
       const response = state.openTarget
-        ? await chrome.runtime.sendMessage({
+        ? await bridgeMessage({
             type: "paperbridge:open-annotation",
             target: state.openTarget,
           })
-        : await chrome.runtime.sendMessage({
+        : await bridgeMessage({
             type: "paperbridge:open-selection",
             annotation: selectionPayload(),
           });
@@ -2285,21 +2614,17 @@
   });
 
   button.addEventListener("click", () => void openPanel(state.anchor));
-  async function copyLocationDiagnostic(includeBoundary = false) {
-    const targetButton = includeBoundary ? boundaryDetailsButton : diagnosticsButton;
-    const request = ++diagnosticCopyRequest;
-    clearTimeout(diagnosticResetTimer);
-    targetButton.disabled = true;
-    const report = {
+  function locationDiagnostic(includeBoundary = true, anchor = state.anchor) {
+    return {
       version: currentVersion,
       doi: extractDoi(),
-      selectedCharacters: state.anchor?.exact?.length || 0,
-      language: state.anchor?.selectedLanguage,
-      originalSelectionLanguage: state.anchor?.selectionMode === "translated" ? "zh" : state.anchor?.selectedLanguage,
-      mappingMethod: state.anchor?.mappingMethod || null,
-      selectionIssue: state.anchor?.selectionIssue || null,
-      excludedReferenceBlocks: state.anchor?.excludedReferenceBlocks || 0,
-      blocks: (state.anchor?.parts || state.anchor?.diagnosticParts)?.map(part => {
+      selectedCharacters: anchor?.exact?.length || 0,
+      language: anchor?.selectedLanguage,
+      originalSelectionLanguage: anchor?.selectionMode === "translated" ? "zh" : anchor?.selectedLanguage,
+      mappingMethod: anchor?.mappingMethod || null,
+      selectionIssue: anchor?.selectionIssue || null,
+      excludedReferenceBlocks: anchor?.excludedReferenceBlocks || 0,
+      blocks: (anchor?.parts || anchor?.diagnosticParts)?.map(part => {
         const { boundary, fragmentGroupFailure, ...summary } = part.sentenceDiagnostic || {};
         return {
           selectedCharacters: part.exact.length,
@@ -2313,6 +2638,13 @@
         };
       }) || [],
     };
+  }
+  async function copyLocationDiagnostic(includeBoundary = false) {
+    const targetButton = includeBoundary ? boundaryDetailsButton : diagnosticsButton;
+    const request = ++diagnosticCopyRequest;
+    clearTimeout(diagnosticResetTimer);
+    targetButton.disabled = true;
+    const report = locationDiagnostic(includeBoundary);
     try {
       await navigator.clipboard.writeText(JSON.stringify(report, null, 2));
       if (request !== diagnosticCopyRequest) return;
@@ -2377,7 +2709,7 @@
   const savedList = savedSection.querySelector(".pb-saved-list");
   const savedRefresh = savedSection.querySelector(".pb-saved-refresh");
   const queueSettings = document.createElement('button'); queueSettings.type='button';queueSettings.textContent='管理待同步记录';
-  queueSettings.onclick=()=>chrome.runtime.sendMessage({type:'paperbridge:settings'});savedSection.querySelector('.pb-library-actions').append(queueSettings);
+  queueSettings.onclick=()=>bridgeMessage({type:'paperbridge:settings'});savedSection.querySelector('.pb-library-actions').append(queueSettings);
   const addDocument=document.createElement('button');addDocument.type='button';addDocument.textContent='添加到 Zotero';
   addDocument.title='保存当前论文条目，并尝试获取可用PDF';savedSection.querySelector('.pb-library-actions').append(addDocument);
   addDocument.onclick=async()=>{
@@ -2388,13 +2720,13 @@
       authors:[...document.querySelectorAll('meta[name="citation_author"]')].map(meta=>meta.content)};
     try {
       savedStatus.textContent='正在保存论文条目…';
-      let result=await chrome.runtime.sendMessage({type:'paperbridge:import-document',payload:{document:metadata}});
+      let result=await bridgeMessage({type:'paperbridge:import-document',payload:{document:metadata}});
       if(!result?.ok)throw Error(result?.error||'添加失败');
       const itemID=result.itemID;
       savedStatus.textContent=result.existing?'文库已有这篇论文，未重复创建；正在检查PDF…':'论文条目已保存，正在获取可用PDF…';
       for(let i=0;i<40 && result.state==='fetching-pdf';i++) {
         await new Promise(resolve=>setTimeout(resolve,1500));
-        result=await chrome.runtime.sendMessage({type:'paperbridge:import-document',payload:{action:'status',itemID}});
+        result=await bridgeMessage({type:'paperbridge:import-document',payload:{action:'status',itemID}});
         if(!result?.ok)throw Error('条目已保存，但无法读取PDF获取状态，请在Zotero中检查。');
       }
       savedStatus.textContent=result.state==='pdf-saved'?'条目和 PDF 已在 Zotero 中保存。':result.state==='fetching-pdf'?'条目已保存，Zotero 仍在获取 PDF，请稍后检查。':'条目已保存，但未取得可用 PDF；可用 Zotero Connector 或手动添加附件。';
@@ -2448,7 +2780,7 @@
   async function loadArticleNotes() {
     noteRefresh.disabled=noteSave.disabled=true;
     try {
-      const response=await chrome.runtime.sendMessage({type:'paperbridge:article-notes',payload:{action:'list',...noteDocument}});
+      const response=await bridgeMessage({type:'paperbridge:article-notes',payload:{action:'list',...noteDocument}});
       if(!response?.ok)throw Error(response?.error||'读取文章笔记失败');
       noteIdentity={parentID:response.parentID,libraryID:response.libraryID,parentKey:response.parentKey};
       noteRows=response.notes||[];noteList.replaceChildren(new Option('新建文章笔记',''));
@@ -2477,7 +2809,7 @@
     noteSave.disabled=noteTitle.disabled=noteBody.disabled=noteList.disabled=noteRefresh.disabled=true;
     try {
       await storeNoteDraft();
-      const response=await chrome.runtime.sendMessage({type:'paperbridge:article-notes',payload:{action:'save',...noteDocument,...noteIdentity,key:noteKey,expectedHTML:noteExpected,title:noteTitle.value,text:noteBody.value}});
+      const response=await bridgeMessage({type:'paperbridge:article-notes',payload:{action:'save',...noteDocument,...noteIdentity,key:noteKey,expectedHTML:noteExpected,title:noteTitle.value,text:noteBody.value}});
       if(!response?.ok)throw Error(response?.error||'保存失败');
       noteKey=response.note.key;noteExpected=response.note.html;
       await chrome.storage.local.set({[oldDraft]:null});
@@ -2487,7 +2819,12 @@
   };
 
   let savedAnnotations = [], savedRanges = [], savedRequest = 0, savedTimer;
+  let savedLoadFlight = null, savedRefreshAt = 0, savedProjectionDirty = false;
+  let savedQuoteContainers = null, nextHighlightName = 0;
+  const savedQuoteEntries = new WeakMap();
+  const savedCards = new Map();
   const savedDrafts = new Map();
+  const deletedAnnotationTombstones = new Set();
   const savedIdentity = a => `${a.attachmentID}:${a.annotationKey}`;
   let savedLoadedUrl = "";
   const highlightStyle = document.createElement("style");
@@ -2497,29 +2834,43 @@
     for (const hit of savedRanges) globalThis.CSS?.highlights?.delete(hit.name);
     savedRanges = []; highlightStyle.textContent = "";
   }
+  function quoteContainers() {
+    if (!savedQuoteContainers) savedQuoteContainers = [...document.querySelectorAll(textContainerSelector)]
+      .filter(el => !root.contains(el) && !el.querySelector("p,li,blockquote,figcaption,td,th,div") &&
+        !el.closest("script,style,noscript,[hidden],nav,header,footer") && el.getClientRects().length);
+    return savedQuoteContainers;
+  }
+  function quoteEntry(el) {
+    let entry = savedQuoteEntries.get(el);
+    if (entry) return entry;
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let normalized = ""; const positions = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (node.parentElement.closest("script,style,noscript,[hidden]")) continue;
+      const visible = document.createRange(); visible.selectNodeContents(node);
+      if (!visible.getClientRects().length) continue;
+      for (let i = 0; i < node.length;) {
+        const ch = String.fromCodePoint(node.textContent.codePointAt(i));
+        const key = quoteKey(ch);
+        normalized += key;
+        for (let j = 0; j < key.length; j++) positions.push({ node, start: i, end: i + ch.length });
+        i += ch.length;
+      }
+    }
+    entry = { normalized, positions, isChinese:/[\u3400-\u9fff]/.test(el.textContent) };
+    savedQuoteEntries.set(el, entry);
+    return entry;
+  }
   function locateSavedQuote(annotation) {
     const needle = quoteKey(annotation.text);
     if (needle.length < 12) return null;
     const found = [];
     const addFound=range=>{if(!found.some(other=>range.compareBoundaryPoints(Range.START_TO_START,other)===0 && range.compareBoundaryPoints(Range.END_TO_END,other)===0))found.push(range);};
-    const containers = [...document.querySelectorAll("p,li,blockquote,figcaption,td,th,h1,h2,h3,h4,h5,h6,div")]
-      .filter(el => !root.contains(el) && !el.querySelector("p,li,blockquote,figcaption,td,th,div") && el.getClientRects().length);
+    const containers = quoteContainers();
     for (const el of containers) {
-      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-      let normalized = ""; const positions = [];
-      while (walker.nextNode()) {
-        const node = walker.currentNode;
-        if (node.parentElement.closest("script,style,noscript,[hidden]")) continue;
-        const visible = document.createRange(); visible.selectNodeContents(node);
-        if (!visible.getClientRects().length) continue;
-        for (let i = 0; i < node.length;) {
-          const ch = String.fromCodePoint(node.textContent.codePointAt(i));
-          const key = quoteKey(ch);
-          normalized += key;
-          for (let j = 0; j < key.length; j++) positions.push({ node, start: i, end: i + ch.length });
-          i += ch.length;
-        }
-      }
+      const entry = quoteEntry(el);
+      const {normalized, positions} = entry;
       let at = normalized.indexOf(needle);
       while (at >= 0) {
         const first = positions[at], last = positions[at + needle.length - 1];
@@ -2529,21 +2880,24 @@
       }
       // Translated text is eligible only when existing sentence mapping proves
       // the exact complete source quote; partial or drifted markers stay listed.
-      if (/[\u3400-\u9fff]/.test(el.textContent)) {
-        const spans = [...el.querySelectorAll("[data-pb-sentence]")];
-        const paragraph = capturedOriginal(el);
+      if (entry.isChinese) {
+        if (!entry.translation) {
+          const spans = [...el.querySelectorAll("[data-pb-sentence]")];
+          const paragraph = capturedOriginal(el);
+          const groups = sentenceGroups(el, spans, paragraph);
+          const bounds = groups ? groupedSentenceRanges(groups) : [];
+          const units = [];
+          for (let i = 0; groups && i < groups.length; i++) {
+            const record = groups[i].saved;
+            const aligned = alignedSentenceParts(bounds[i], record.text);
+            units.push(...(aligned.length ? aligned : [{original:record.text,range:bounds[i]}]));
+          }
+          entry.translation = {paragraph, units};
+        }
+        const {paragraph, units} = entry.translation;
         if (paragraph && quoteKey(paragraph) === needle) {
           const range = document.createRange(); range.selectNodeContents(el);
           if (capturedSentenceSelection(el, range, paragraph)) { addFound(range); continue; }
-        }
-        const groups = sentenceGroups(el, spans, paragraph);
-        if (!groups) continue;
-        const bounds = groupedSentenceRanges(groups);
-        const units=[];
-        for(let i=0;i<groups.length;i++) {
-          const record=groups[i].saved;
-          const aligned=alignedSentenceParts(bounds[i],record.text);
-          units.push(...(aligned.length?aligned:[{original:record.text,range:bounds[i]}]));
         }
         for(let i=0;i<units.length;i++) {
           let source='';
@@ -2568,15 +2922,27 @@
     return distinct.length === 1 ? distinct[0] : null;
   }
   function renderSavedAnnotations() {
-    clearSavedHighlights(); savedList.replaceChildren();
     if (savedLoadedUrl !== location.href.split("#")[0]) return;
-    savedAnnotations.forEach((annotation, index) => {
-      const card = document.createElement("article"); card.className = "pb-saved-card";
+    // Resolve against one shared paragraph index before writing cards or CSS.
+    // Keep existing cards/highlights when their data and range did not change.
+    const resolved = savedAnnotations.filter(annotation => !deletedAnnotationTombstones.has(savedIdentity(annotation)))
+      .map(annotation => ({annotation, range:locateSavedQuote(annotation)}));
+    const identities = new Set(resolved.map(({annotation}) => savedIdentity(annotation)));
+    for (const [identity, entry] of savedCards) if (!identities.has(identity)) {
+      globalThis.CSS?.highlights?.delete(entry.name);
+      entry.card.remove(); savedCards.delete(identity);
+    }
+    const styles = []; savedRanges = [];
+    resolved.forEach(({annotation, range}, index) => {
+      const identity = savedIdentity(annotation), signature = JSON.stringify(annotation);
+      let entry = savedCards.get(identity);
       const color = /^#[0-9a-f]{6}$/i.test(annotation.color || "") ? annotation.color : "#ffd400";
+      if (!entry || entry.signature !== signature) {
+      const name = entry?.name || `pb-saved-${nextHighlightName++}`;
+      entry?.card.remove();
+      const card = document.createElement("article"); card.className = "pb-saved-card";
       card.style.borderLeftColor = color;
-      const range = locateSavedQuote(annotation);
       const meta = document.createElement("p");
-      meta.textContent = `第 ${annotation.pageLabel || "?"} 页 · ${range ? "已定位网页" : "仅侧栏显示，未可靠定位"}`;
       const quote = document.createElement("blockquote"); quote.textContent = annotation.text || "非文字批注";
       const comment = document.createElement("p");
       // Comments may contain rich-text HTML. Parse inertly and insert text only.
@@ -2586,12 +2952,12 @@
       const open = document.createElement("button"); open.type = "button"; open.textContent = "在 Zotero 中打开";
       open.addEventListener("click", async () => {
         try {
-          const result = await chrome.runtime.sendMessage({type:"paperbridge:open-annotation",target:{attachmentID:annotation.attachmentID,annotationKey:annotation.annotationKey}});
+          const result = await bridgeMessage({type:"paperbridge:open-annotation",target:{attachmentID:annotation.attachmentID,annotationKey:annotation.annotationKey}});
           if (!result?.ok) savedStatus.textContent = result?.error || "打开批注失败";
         } catch (error) { savedStatus.textContent = error.message; }
       });
       const actions=document.createElement('div'); actions.className='pb-annotation-actions';
-      actions.append(open); card.append(meta, quote, comment, actions); savedList.append(card);
+      actions.append(open); card.append(meta, quote, comment, actions);
       card.dataset.annotation = savedIdentity(annotation);
       const edit = document.createElement('button'); edit.type='button'; edit.textContent='编辑内容';
       const remove = document.createElement('button'); remove.type='button'; remove.textContent='删除批注';
@@ -2599,7 +2965,6 @@
       const editor = document.createElement('textarea'); editor.setAttribute('aria-label','编辑批注内容（含已有译文和笔记）'); editor.hidden=true;
       const save = document.createElement('button'); save.type='button'; save.textContent='保存到 Zotero'; save.hidden=true;
       const cancel = document.createElement('button'); cancel.type='button'; cancel.textContent='取消'; cancel.hidden=true;
-      const identity = savedIdentity(annotation);
       const editing = active => {editor.hidden=save.hidden=cancel.hidden=!active;edit.hidden=active;};
       edit.onclick=()=>{editor.value=savedDrafts.get(identity)?.value ?? comment.textContent;savedDrafts.set(identity,{value:editor.value,expected:annotation.comment||''});editing(true);editor.focus();};
       editor.oninput=()=>savedDrafts.set(identity,{value:editor.value,expected:savedDrafts.get(identity)?.expected ?? (annotation.comment||'')});
@@ -2607,43 +2972,89 @@
       const mutate = async action => {
         save.disabled=remove.disabled=cancel.disabled=edit.disabled=true;
         try {
-          const response=await chrome.runtime.sendMessage({type:'paperbridge:mutate-annotation',payload:{action,attachmentID:annotation.attachmentID,annotationKey:annotation.annotationKey,expectedComment:action==='edit'?(savedDrafts.get(identity)?.expected ?? (annotation.comment||'')):(annotation.comment||''),comment:editor.value}});
+          const response=await bridgeMessage({type:'paperbridge:mutate-annotation',payload:{action,attachmentID:annotation.attachmentID,annotationKey:annotation.annotationKey,expectedComment:action==='edit'?(savedDrafts.get(identity)?.expected ?? (annotation.comment||'')):(annotation.comment||''),comment:editor.value}});
           if(!response?.ok) throw Error(response?.error || '操作失败');
-          savedDrafts.delete(identity); await loadSavedAnnotations();
+          savedDrafts.delete(identity);
+          if(action==='delete') {
+            deletedAnnotationTombstones.add(identity);
+            savedAnnotations=savedAnnotations.filter(item=>savedIdentity(item)!==identity);
+            renderSavedAnnotations();
+          } else editing(false);
+          await loadSavedAnnotations({fresh:true});
         } catch(error) {savedStatus.textContent=error.message;}
         finally {save.disabled=remove.disabled=cancel.disabled=edit.disabled=false;}
       };
       save.onclick=()=>mutate('edit');remove.onclick=()=>mutate('delete');
       actions.append(edit,remove); card.append(editor,save,cancel);
       if(savedDrafts.has(identity)){editor.value=savedDrafts.get(identity).value;editing(true);}
-      if (range && globalThis.CSS?.highlights && globalThis.Highlight) {
-        const name = `pb-saved-${index}`;
-        CSS.highlights.set(name, new Highlight(range));
-        highlightStyle.textContent += `::highlight(${name}){background-color:${color}70;text-decoration:underline ${color};}`;
-        savedRanges.push({name,range,card});
-        const locate = document.createElement("button"); locate.type = "button"; locate.textContent = "查看网页位置";
-        locate.addEventListener("click", () => range.startContainer.parentElement.scrollIntoView({block:"center",behavior:"smooth"}));
-        actions.insertBefore(locate,edit);
+      const locate = document.createElement("button"); locate.type = "button"; locate.textContent = "查看网页位置";
+      locate.addEventListener("click", () => entry.range?.startContainer.parentElement?.scrollIntoView({block:"center",behavior:"smooth"}));
+      actions.insertBefore(locate,edit);
+      entry = {card, meta, locate, name, signature, range:null};
+      savedCards.set(identity, entry);
       }
+      if (savedList.children[index] !== entry.card)
+        savedList.insertBefore(entry.card, savedList.children[index] || null);
+      const status = `第 ${annotation.pageLabel || "?"} 页 · ${range ? "已定位网页" : "仅侧栏显示，未可靠定位"}`;
+      if (entry.meta.textContent !== status) entry.meta.textContent = status;
+      entry.locate.hidden = !range;
+      if (range && globalThis.CSS?.highlights && globalThis.Highlight) {
+        const same = entry.range && entry.range.startContainer === range.startContainer &&
+          entry.range.startOffset === range.startOffset && entry.range.endContainer === range.endContainer &&
+          entry.range.endOffset === range.endOffset;
+        if (!same || !CSS.highlights.has(entry.name)) CSS.highlights.set(entry.name, new Highlight(range));
+        styles.push(`::highlight(${entry.name}){background-color:${color}70;text-decoration:underline ${color};}`);
+        savedRanges.push({name:entry.name,range,card:entry.card});
+      } else {
+        globalThis.CSS?.highlights?.delete(entry.name);
+      }
+      entry.range = range;
     });
+    const css = styles.join("");
+    if (highlightStyle.textContent !== css) highlightStyle.textContent = css;
     savedStatus.textContent = `共 ${savedAnnotations.length} 条批注，${savedRanges.length} 条已标到网页。`;
   }
-  async function loadSavedAnnotations() {
+  function loadSavedAnnotations(options = {}) {
+    const url = currentPageUrl();
+    if (savedLoadFlight?.url === url) {
+      // Mutation acknowledgements need a result obtained AFTER that mutation.
+      // Ordinary concurrent refreshes share the current read.
+      if (options.fresh) {
+        ++savedRequest;
+        return savedLoadFlight.promise.then(() => loadSavedAnnotations());
+      }
+      return savedLoadFlight.promise;
+    }
+    if (options.passive && Date.now() - savedRefreshAt < 5000) return Promise.resolve();
+    savedRefreshAt = Date.now();
+    const flight = {url, promise:null};
+    flight.promise = readSavedAnnotations().finally(() => { if (savedLoadFlight === flight) savedLoadFlight = null; });
+    savedLoadFlight = flight;
+    return flight.promise;
+  }
+  async function readSavedAnnotations() {
     const request = ++savedRequest, url = location.href.split("#")[0];
+    if (savedLoadedUrl && savedLoadedUrl !== url) {
+      clearSavedHighlights(); savedList.replaceChildren(); savedCards.clear(); savedAnnotations = [];
+      savedQuoteContainers = null;
+    }
     savedRefresh.disabled = true; savedStatus.textContent = "正在读取 Zotero 批注…";
     try {
-      const response = await chrome.runtime.sendMessage({type:"paperbridge:list-annotations",locator:documentLocator()});
+      const response = await bridgeMessage({type:"paperbridge:list-annotations",locator:documentLocator()});
       if (request !== savedRequest || url !== location.href.split("#")[0]) return;
-      clearSavedHighlights(); savedList.replaceChildren(); savedAnnotations = []; savedLoadedUrl = url;
-      if (!response?.ok) { savedStatus.textContent = response?.error || "无法读取批注，请确认 Zotero 已打开且两端插件均已更新"; return; }
-      savedAnnotations = response.annotations || []; renderSavedAnnotations();
+      if (!response?.ok) throw Error(response?.error || "无法读取批注，请确认 Zotero 已打开且两端插件均已更新");
+      savedLoadedUrl = url;
+      const incoming = response.annotations || [];
+      for (const identity of [...deletedAnnotationTombstones])
+        if (!incoming.some(annotation => savedIdentity(annotation) === identity)) deletedAnnotationTombstones.delete(identity);
+      savedAnnotations = incoming.filter(annotation => !deletedAnnotationTombstones.has(savedIdentity(annotation)));
+      renderSavedAnnotations();
     } catch (error) {
       if (request === savedRequest) {
-        clearSavedHighlights(); savedAnnotations = []; savedList.replaceChildren();
-        savedStatus.textContent = error.message;
+        savedStatus.textContent = `${error.message}${savedAnnotations.length ? "；暂时保留上次读取的批注，可稍后刷新。" : ""}`;
       }
     }
-    finally { if (request === savedRequest) savedRefresh.disabled = false; }
+    finally { savedRefresh.disabled = false; }
   }
   savedRefresh.addEventListener("click", loadSavedAnnotations);
   document.addEventListener("click", event => {
@@ -2659,11 +3070,58 @@
       if(hits.length>1)savedStatus.textContent=`此处有 ${hits.length} 条重叠批注，再次点击可切换。`;
     }
   });
+  function scheduleSavedProjection() {
+    if (!savedAnnotations.length || document.hidden || savedTimer) return;
+    savedTimer = setTimeout(() => {
+      savedTimer = 0;
+      if (!savedProjectionDirty || document.hidden) return;
+      savedProjectionDirty = false;
+      renderSavedAnnotations();
+    }, 100);
+  }
   new MutationObserver(records => {
-    if (!savedAnnotations.length || records.every(record => root.contains(record.target))) return;
-    clearTimeout(savedTimer); savedTimer = setTimeout(renderSavedAnnotations, 700);
-  }).observe(document.documentElement, {subtree:true,childList:true,characterData:true});
-  const autoLoadSaved = () => { if (extractDoi()) void loadSavedAnnotations(); };
+    let relevant = false;
+    for (const record of records) {
+      if (root.contains(record.target)) continue;
+      const target = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
+      if (!target || target.closest("script,style,noscript,nav,header,footer")) continue;
+      const container = target.closest(textContainerSelector);
+      if (container && !container.querySelector("p,li,blockquote,figcaption,td,th,div")) {
+        savedQuoteEntries.delete(container); relevant = true;
+      }
+      const changedNodes = record.type === "attributes" ? [target] : [...record.addedNodes, ...record.removedNodes];
+      for (const node of changedNodes) {
+        if (node.nodeType !== Node.ELEMENT_NODE || root.contains(node)) continue;
+        if (node.matches(textContainerSelector) || node.querySelector(textContainerSelector)) {
+          savedQuoteContainers = null; relevant = true;
+          savedQuoteEntries.delete(node);
+          for (const child of node.querySelectorAll(textContainerSelector)) savedQuoteEntries.delete(child);
+        } else if (record.type === "attributes" && container) {
+          // Inline visibility changes invalidate its containing paragraph.
+          savedQuoteEntries.delete(container); relevant = true;
+        }
+      }
+    }
+    if (!relevant) return;
+    savedProjectionDirty = true;
+    // Detached ranges cannot be reused; unrelated ranges remain painted while
+    // changed paragraphs are revalidated locally. DOM changes never read Zotero.
+    for (const hit of savedRanges)
+      if (!hit.range.startContainer.isConnected || !hit.range.endContainer.isConnected || hit.range.collapsed)
+        globalThis.CSS?.highlights?.delete(hit.name);
+    scheduleSavedProjection();
+  }).observe(document.documentElement, {subtree:true,childList:true,characterData:true,
+    attributes:true,attributeFilter:["hidden","class","style"]});
+  document.addEventListener('visibilitychange',()=>{
+    if(document.visibilityState==='visible') {
+      scheduleSavedProjection();
+      if(extractDoi()) void loadSavedAnnotations();
+    }
+  });
+  window.addEventListener('focus', () => {
+    if (!document.hidden && extractDoi()) void loadSavedAnnotations({passive:true});
+  });
+  const autoLoadSaved = () => { if (extractDoi() && !document.hidden) void loadSavedAnnotations(); };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", autoLoadSaved, {once:true});
   else autoLoadSaved();
 
@@ -2675,7 +3133,7 @@
     panel.dataset.open="true";
     savedStatus.textContent='正在定位 PDF 选中的文字…';
     try {
-      const response=await chrome.runtime.sendMessage({type:'paperbridge:web-selection',payload:{ticket,doi:extractDoi(),url:location.href.split('#')[0]}});
+      const response=await bridgeMessage({type:'paperbridge:web-selection',payload:{ticket,doi:extractDoi(),url:location.href.split('#')[0]}});
       if(generation!==webJumpGeneration)return;
       if(!response?.ok)throw Error(response?.error || '无法读取PDF选区');
       let range;
@@ -2704,4 +3162,71 @@
       else { void openPanel(state.anchor); void loadSavedAnnotations(); }
     }
   });
+
+  // Revisit evidence on demand. No DOM observer, polling or Zotero write.
+  async function restoreIssueReview() {
+    let response;
+    try {response=await chrome.runtime.sendMessage({type:'paperbridge:issue-pending'});}catch{return;}
+    const record=response?.ok && response.record;
+    if(!record || root.querySelector('.pb-issue-review'))return;
+    const data=record.latest,box=document.createElement('section');box.className='pb-issue-review';
+    const heading=document.createElement('strong');heading.textContent='问题复核';
+    const original=document.createElement('p');original.textContent=data.selector.exact || data.message;
+    const info=document.createElement('p');info.setAttribute('role','status');
+    const retry=document.createElement('button');retry.textContent='重新查找位置';
+    const rematch=document.createElement('button');rematch.textContent='用此选区重新匹配';rematch.disabled=true;
+    const note=document.createElement('textarea');note.placeholder='复核备注';note.setAttribute('aria-label','复核备注');note.value=record.note || '';note.maxLength=5000;
+    const pass=document.createElement('button');pass.textContent='已解决';
+    const fail=document.createElement('button');fail.textContent='仍有问题';
+    const actions=document.createElement('div');actions.append(retry,rematch,pass,fail);
+    box.append(heading,original,actions,note,info);panel.querySelector('.pb-dock').prepend(box);panel.dataset.open='true';
+    const reviewStyle=document.createElement('style');reviewStyle.textContent='::highlight(pb-issue-location){background:#b6dcff;text-decoration:underline #2679c1;}';root.append(reviewStyle);
+    let located=null,locatedText='';
+    const normalize=text=>String(text||'').normalize('NFKC').replace(/\s+/gu,'');
+    const locate=()=>{
+      located=null;rematch.disabled=true;globalThis.CSS?.highlights?.delete('pb-issue-location');
+      const positions=[];let text='';
+      for(const el of [...document.querySelectorAll(textContainerSelector)].filter(el=>!root.contains(el)&&isTextContainer(el)&&!el.closest('nav,header,footer,[hidden]')&&el.getClientRects().length)) {
+        const walker=document.createTreeWalker(el,NodeFilter.SHOW_TEXT);
+        while(walker.nextNode()) {
+          const node=walker.currentNode;
+          if(node.parentElement.closest('script,style,noscript,[hidden]'))continue;
+          const visible=document.createRange();visible.selectNodeContents(node);if(!visible.getClientRects().length)continue;
+          for(let offset=0;offset<node.length;){const ch=String.fromCodePoint(node.textContent.codePointAt(offset)),key=normalize(ch);text+=key;for(let j=0;j<key.length;j++)positions.push({node,start:offset,end:offset+ch.length});offset+=ch.length;}
+        }
+      }
+      const find=quote=>{
+        const key=normalize(quote);if(key.length<2)return [];
+        const hits=[];for(let at=text.indexOf(key);at>=0;at=text.indexOf(key,at+1)) {
+          hits.push({at,length:key.length});if(hits.length>100)break;
+        }return hits;
+      };
+      let language='原选区',hits=find(data.selector.exact);
+      if(hits.length>1){const prefix=normalize(data.selector.prefix),suffix=normalize(data.selector.suffix);
+        if(prefix||suffix)hits=hits.filter(hit=>(!prefix||text.slice(Math.max(0,hit.at-prefix.length),hit.at)===prefix)&&(!suffix||text.slice(hit.at+hit.length,hit.at+hit.length+suffix.length)===suffix));}
+      if(!hits.length && data.selector.english){hits=find(data.selector.english);language='已保存的对应英文';}
+      if(hits.length!==1){info.textContent=hits.length?'发现多处相同文字，未自动选定。请按原记录核对位置。':'未找到唯一原选区。若记录是中文，请先启用 Google 翻译，再点“重新查找位置”；译文改变时需按上方原记录手动核对。';return;}
+      const hit=hits[0],first=positions[hit.at],last=positions[hit.at+hit.length-1];
+      located=document.createRange();located.setStart(first.node,first.start);located.setEnd(last.node,last.end);
+      locatedText=normalize(located.toString());
+      if(globalThis.CSS?.highlights && globalThis.Highlight)CSS.highlights.set('pb-issue-location',new Highlight(located));
+      first.node.parentElement.scrollIntoView({block:'center',behavior:'smooth'});rematch.disabled=false;info.textContent=`已找到${language}。可重新匹配，再由你确认复核结果。`;
+    };
+    retry.onclick=locate;
+    rematch.onclick=()=>{
+      if(!located || !located.startContainer.isConnected || !located.endContainer.isConnected || located.collapsed || normalize(located.toString())!==locatedText){info.textContent='页面已变化，请重新查找位置。';return;}
+      const anchor=buildAnchor({rangeCount:1,isCollapsed:false,getRangeAt:()=>located,toString:()=>located.toString()});
+      if(anchor)void openPanel(anchor);
+    };
+    const review=async status=>{
+      pass.disabled=fail.disabled=true;
+      try{const result=await chrome.runtime.sendMessage({type:'paperbridge:issue-review',id:record.id,patch:{status,note:note.value}});
+        if(!result?.ok)throw Error(result?.error || '保存失败');info.textContent=`已保存“${status==='resolved'?'已解决':'仍有问题'}” · 复核版本 ${currentVersion}`;
+      }catch(error){info.textContent=error.message;}finally{pass.disabled=fail.disabled=false;}
+    };
+    pass.onclick=()=>void review('resolved');fail.onclick=()=>void review('unresolved');
+    locate();
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>void restoreIssueReview(),{once:true});
+  else void restoreIssueReview();
 })();
